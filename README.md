@@ -8,12 +8,14 @@ complements Yopsa's approved financial ledger (Alogsys or equivalent) and never
 replaces it: Pamoja owns meeting and operational records, the core ledger owns
 contractual schedules, posted balances and accounting.
 
-> **Delivery status: P1 platform core implemented.**
-> This repository contains the approved-plan artefacts, the platform skeleton and
-> the P1 platform core: Argon2id authentication, TOTP second factors, rotating
+> **Delivery status: P2 registration core implemented.**
+> This repository contains the approved-plan artefacts, the platform skeleton,
+> the P1 platform core (Argon2id authentication, TOTP second factors, rotating
 > refresh sessions, step-up, PostgreSQL row-level security, the append-only
-> hash-chained audit log and the idempotency store. The domain modules and the
-> full client arrive in P2–P10. Nothing here is a production deployment.
+> hash-chained audit log and the idempotency store) and the P2 registration
+> core: legal entities, branches, group types, the group lifecycle, memberships,
+> consent records and authority appointments. Meetings, payments, loans and the
+> full client arrive in P3–P10. Nothing here is a production deployment.
 
 ## What exists today
 
@@ -25,7 +27,9 @@ contractual schedules, posted balances and accounting.
 | Route registry that fails the build when a route omits its authorisation | Implemented, tested |
 | Authentication: Argon2id passwords, TOTP MFA, short-lived JWT access tokens, rotating refresh tokens with reuse detection, lockout, step-up | Implemented, tested (unit + database integration) |
 | PostgreSQL row-level security, least-privilege roles (`pamoja_app`, `pamoja_readonly`, `pamoja_auth`), append-only audit hash chain, idempotency store | Implemented, tested (database integration) |
-| PostgreSQL baseline and P1 migrations (identity, sessions, audit, RLS) | Implemented, applied by the dev stack |
+| Registration: legal entities, branches, group types, group lifecycle (draft → submitted → review → active/returned/rejected), memberships, consent records, authority appointments | Implemented, tested (unit + database integration) |
+| Generated route × role × scope authorisation suite and SQL-injection regression test | Implemented, tested |
+| PostgreSQL baseline and migrations (identity, sessions, audit, RLS, registration) | Implemented, applied by the dev stack |
 | OpenAPI 3.1 skeleton | Written, linted in CI |
 | Flutter client shell (theme, routing, status home) | Written; **not compiled here** (no Flutter SDK) |
 | CI pipeline, Makefile, local dev compose | Written; pipeline runs on GitHub, **not verified here** |
@@ -46,6 +50,8 @@ docker compose -f deploy/docker-compose.dev.yml up --build
 | http://localhost:8080/api/v1/meta | Build and environment metadata |
 | `POST http://localhost:8080/api/v1/auth/login` | Password + TOTP sign-in |
 | `POST http://localhost:8080/api/v1/auth/refresh` | Rotate the refresh token |
+| http://localhost:8080/api/v1/group-types | Group forms reference data |
+| `POST http://localhost:8080/api/v1/groups` | Register a group (requires a session) |
 
 Expected readiness response once PostgreSQL and the baseline migration are up:
 
@@ -117,6 +123,7 @@ approval:
 
 | Date | Environment | What was run | Result |
 |---|---|---|---|
+| 2026-11-27 | Linux sandbox, Go 1.26 (`golang:1.26` container), PostgreSQL 16 | `gofmt -l`, `go build`, `go vet`, `go test -race ./...` including registration integration tests (lifecycle, SD-06, RLS isolation, consent, authority, SQL-injection payload), migration 000003 applied, stack boot, `/healthz`, `/readyz`, status-page render | Passed |
 | 2026-11-26 | Linux sandbox, Go 1.26.11 (`golang:1.26` container), golangci-lint v2.15.0, PostgreSQL 16, Node 22 | `gofmt -l`, `go build`, `go vet`, `go test -race`, coverage gate, `golangci-lint run`, OpenAPI lint, stack boot, `/healthz`, `/readyz`, status-page render | Passed |
 
 Not verified in this environment: Flutter analyze/test (no SDK), GitHub Actions

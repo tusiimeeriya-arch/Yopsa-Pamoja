@@ -1,7 +1,8 @@
 # Architecture
 
-**Status:** P0 plan delivered; P1 platform core implemented. Implementation
-status per component is in [§14](#14-implementation-status).
+**Status:** P0 plan delivered; P1 platform core and P2 registration core
+implemented. Implementation status per component is in
+[§14](#14-implementation-status).
 **Source:** Yopsa Pamoja Concept Document v1.0 (31 October 2026).
 
 ## 1. Purpose and boundaries
@@ -344,8 +345,10 @@ non-root with read-only root filesystems and resource limits.
 | CI pipeline skeleton, Makefile, dev compose | P0 | Written; pipeline runs on GitHub, not verified here |
 | Authentication: Argon2id, TOTP, access/refresh tokens, rotation with reuse detection, lockout, step-up ([AUTH.md](AUTH.md)) | P1 | Implemented and tested (unit + database integration) |
 | RLS policies, least-privilege database roles, append-only audit hash chain, idempotency store ([AUTH.md](AUTH.md)) | P1 | Implemented and tested (database integration) |
+| Registration: legal entities, branches, group types, group lifecycle guard, memberships, consent and authority records ([API.md](API.md), [DATA_PROTECTION.md](DATA_PROTECTION.md)) | P2 | Implemented and tested (unit + database integration) |
+| Generated route × role × scope authorisation suite, SQL-injection regression test | P2 | Implemented and tested |
 | Storage service: private object storage, signed URLs, scanning, EXIF stripping | P1/P3 | Not started |
-| Domain modules, dashboards, offline sync, hardening, deployment | P2–P10 | Not started |
+| Meetings, payments, loans, dashboards, offline sync, hardening, deployment | P3–P10 | Not started |
 
 ## 15. Open questions for approval
 

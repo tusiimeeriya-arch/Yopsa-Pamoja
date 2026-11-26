@@ -11,10 +11,16 @@ target for the deployment phase, and the ledger it expects is already maintained
 |---|---|
 | `000001_baseline` | `pamoja` schema, `pgcrypto`/`citext` extensions, `schema_migrations` ledger |
 | `000002_p1_auth_rls` | P1 platform core: identity, credentials, TOTP secrets, sessions, scoped role grants, append-only audit hash chain, idempotency store, row-level security and the least-privilege roles (`pamoja_owner`, `pamoja_app`, `pamoja_readonly`, `pamoja_auth`) |
+| `000003_p2_registration` | P2 registration: legal entities, branches, group types, groups and branch history with the lifecycle/SD-06 trigger, members, memberships, consent records, authority records, RLS scope helpers and the group-type seed |
 
-Both files are idempotent because the development stack applies them on every
-boot. `000002` also pins `pgcrypto` to the `pamoja` schema so the hash-chain
-functions resolve `digest()` identically in every deployment.
+Every file is idempotent because the development stack applies them in order on
+every boot. `000002` also pins `pgcrypto` to the `pamoja` schema so the
+hash-chain functions resolve `digest()` identically in every deployment.
+
+`000003` introduces `group_in_actor_scope` and `member_in_actor_scope`, owned by
+`pamoja_auth` (BYPASSRLS), so member and membership policies can share a scope
+test without recursing into each other. They read only the transaction-local
+actor and scope settings.
 
 ## Rules from P1 onwards
 

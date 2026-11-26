@@ -1,8 +1,9 @@
 # State machines
 
-**Status:** P0 — delivered for approval. Each transition below is logged with
-actor, role, scope, reason and correlation id, and is enforced by a PostgreSQL
-transition trigger as well as by the service layer.
+**Status:** P0 delivered; the group lifecycle is implemented in P2 and enforced
+by a PostgreSQL trigger as well as the service layer. Later lifecycles are
+delivered with their phase. Each transition below is logged with actor, role,
+scope, reason and correlation id.
 
 Reading the diagrams: `[*]` is the initial state; labels name the actor and the
 guard that must hold. An action not drawn is not permitted.

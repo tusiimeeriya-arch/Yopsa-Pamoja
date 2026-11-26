@@ -12,7 +12,7 @@ internal/
   rbac/      authorisation engine + machine-checked matrix
   auth/      credentials, TOTP, sessions, refresh families
   audit/     append-only hash-chained audit log
-  groups/    legal entity, branch, group, membership, authority
+  groups/    legal entity, branch, group, membership, consent, authority (P2)
   meetings/  meetings, registers, minutes, resolutions, action items
   payments/  entries, submissions, receipts, allocations, postings
   loans/     applications, appraisals, decisions, offers, disbursements

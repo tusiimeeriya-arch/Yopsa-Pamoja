@@ -16,6 +16,7 @@ import (
 
 	"github.com/yopsa/pamoja/backend/internal/audit"
 	"github.com/yopsa/pamoja/backend/internal/auth"
+	"github.com/yopsa/pamoja/backend/internal/groups"
 	"github.com/yopsa/pamoja/backend/internal/httpapi"
 	"github.com/yopsa/pamoja/backend/internal/platform/config"
 	"github.com/yopsa/pamoja/backend/internal/platform/keyring"
@@ -59,18 +60,29 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	recorder := audit.New(pool)
 	authService := auth.NewService(auth.Options{
 		Pool:   pool,
 		Config: cfg.Auth,
 		Env:    string(cfg.AppEnv),
 		Keys:   keys,
-		Audit:  audit.New(pool),
+		Audit:  recorder,
 		Logger: log,
 	})
+	groupsService, err := groups.NewService(groups.Options{
+		Pool: pool,
+		Keys: keys,
+	})
+	if err != nil {
+		return err
+	}
 
 	srv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           httpapi.New(httpapi.Deps{Pool: pool, Logger: log, Config: cfg, Version: version, Auth: authService}),
+		Addr: fmt.Sprintf(":%d", cfg.Port),
+		Handler: httpapi.New(httpapi.Deps{
+			Pool: pool, Logger: log, Config: cfg, Version: version,
+			Auth: authService, Groups: groupsService,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,

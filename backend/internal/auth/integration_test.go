@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/yopsa/pamoja/backend/internal/platform/config"
 	"github.com/yopsa/pamoja/backend/internal/platform/db"
 	"github.com/yopsa/pamoja/backend/internal/platform/keyring"
+	"github.com/yopsa/pamoja/backend/internal/rbac"
 )
 
 const appRolePassword = "pamoja_test_app_password"
@@ -66,14 +68,30 @@ func setupDatabase(dsn string) error {
 	}
 	defer func() { _ = conn.Close(ctx) }()
 
-	for _, name := range []string{"000001_baseline.up.sql", "000002_p1_auth_rls.up.sql"} {
-		path := filepath.Join("..", "..", "db", "migrations", name)
+	// Serialise migration application with the groups package's integration
+	// tests, which may run in parallel in another test binary.
+	if _, err := conn.Exec(ctx,
+		`SELECT pg_advisory_lock(hashtext('pamoja-test-migrations'))`); err != nil {
+		return err
+	}
+	defer func() {
+		_, _ = conn.Exec(context.Background(),
+			`SELECT pg_advisory_unlock(hashtext('pamoja-test-migrations'))`)
+	}()
+
+	// Apply every up migration in order; each file is idempotent.
+	paths, err := filepath.Glob(filepath.Join("..", "..", "db", "migrations", "*.up.sql"))
+	if err != nil {
+		return err
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
 		script, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
 		if _, execErr := conn.Exec(ctx, string(script)); execErr != nil {
-			return fmt.Errorf("apply %s: %w", name, execErr)
+			return fmt.Errorf("apply %s: %w", filepath.Base(path), execErr)
 		}
 	}
 	if _, err := conn.Exec(ctx, "ALTER ROLE pamoja_app PASSWORD '"+appRolePassword+"'"); err != nil {
@@ -147,6 +165,7 @@ type testUser struct {
 	Phone    string
 	Password string
 	TOTP     string
+	GroupID  string
 }
 
 func createTestUser(t *testing.T, owner *pgxpool.Pool, mfa bool) testUser {
@@ -202,10 +221,11 @@ func createTestUser(t *testing.T, owner *pgxpool.Pool, mfa bool) testUser {
 		user.TOTP = secret
 	}
 
+	user.GroupID = uuid.NewString()
 	if _, err := owner.Exec(ctx,
 		`INSERT INTO pamoja.role_grant (user_id, role, group_id)
 		 VALUES ($1::uuid, 'treasurer', $2::uuid)`,
-		user.ID, uuid.NewString()); err != nil {
+		user.ID, user.GroupID); err != nil {
 		t.Fatalf("insert role grant: %v", err)
 	}
 
@@ -415,6 +435,13 @@ func TestLoginRefreshReuseAndLogout(t *testing.T) {
 	}
 	if !principal.MFAVerified {
 		t.Fatal("principal should be marked MFA-verified")
+	}
+	if len(principal.Bindings) != 1 ||
+		principal.Bindings[0].Role != rbac.RoleTreasurer ||
+		principal.Bindings[0].Scope != rbac.ScopeGroup ||
+		len(principal.Bindings[0].ScopeIDs) != 1 ||
+		principal.Bindings[0].ScopeIDs[0] != user.GroupID {
+		t.Fatalf("principal bindings = %+v, want treasurer at group %s", principal.Bindings, user.GroupID)
 	}
 
 	rotated, err := svc.Refresh(ctx, RefreshInput{

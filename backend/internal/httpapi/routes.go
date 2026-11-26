@@ -18,6 +18,7 @@ type Deps struct {
 	Config  config.Config
 	Version string
 	Auth    AuthService
+	Groups  GroupsService
 }
 
 // Route is one entry of the HTTP surface. Routes are declared as data so that
@@ -35,8 +36,9 @@ type Route struct {
 // Routes returns the complete HTTP surface for this build.
 //
 // Authentication endpoints are the only public state-changing routes: they
-// mint the session that every other route requires. Domain routes arrive in
-// P2 and must declare their module and action here.
+// mint the session that every other route requires. Group types are public
+// reference data. Every other domain route declares its RBAC module and
+// action here.
 func Routes(d Deps) []Route {
 	return []Route{
 		{Method: http.MethodGet, Pattern: "/", Public: true, Handler: d.handleLanding},
@@ -50,5 +52,23 @@ func Routes(d Deps) []Route {
 		{Method: http.MethodGet, Pattern: "/api/v1/auth/sessions", Module: rbac.ModuleAuth, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListSessions)},
 		{Method: http.MethodPost, Pattern: "/api/v1/auth/sessions/{sessionID}/revoke", Module: rbac.ModuleAuth, Action: rbac.ActionRevoke, Handler: d.requireAuth(d.handleRevokeSession)},
 		{Method: http.MethodPost, Pattern: "/api/v1/auth/step-up", Module: rbac.ModuleAuth, Action: rbac.ActionStepUp, Handler: d.requireAuth(d.handleStepUp)},
+
+		// P2 registration: identity, organisation and authority.
+		{Method: http.MethodGet, Pattern: "/api/v1/group-types", Public: true, Handler: d.handleListGroupTypes},
+		{Method: http.MethodGet, Pattern: "/api/v1/legal-entities", Module: rbac.ModuleRegistration, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListLegalEntities)},
+		{Method: http.MethodGet, Pattern: "/api/v1/legal-entities/{legalEntityID}/branches", Module: rbac.ModuleRegistration, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListBranches)},
+		{Method: http.MethodPost, Pattern: "/api/v1/groups", Module: rbac.ModuleRegistration, Action: rbac.ActionCreate, Handler: d.requireAuth(d.handleCreateGroup)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups", Module: rbac.ModuleRegistration, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListGroups)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}", Module: rbac.ModuleRegistration, Action: rbac.ActionView, Handler: d.requireAuth(d.handleGetGroup)},
+		{Method: http.MethodPatch, Pattern: "/api/v1/groups/{groupID}", Module: rbac.ModuleRegistration, Action: rbac.ActionEditDraft, Handler: d.requireAuth(d.handleUpdateGroup)},
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/submit", Module: rbac.ModuleRegistration, Action: rbac.ActionSubmit, Handler: d.requireAuth(d.handleSubmitGroup)},
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/review", Module: rbac.ModuleRegistration, Action: rbac.ActionReviewActivate, Handler: d.requireAuth(d.handleReviewGroup)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/members", Module: rbac.ModuleRegistration, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListMemberships)},
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/members", Module: rbac.ModuleRegistration, Action: rbac.ActionCreate, Handler: d.requireAuth(d.handleAddMembership)},
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/members/{membershipID}/end", Module: rbac.ModuleRegistration, Action: rbac.ActionEditDraft, Handler: d.requireAuth(d.handleEndMembership)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/authorities", Module: rbac.ModuleRegistration, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListAuthorities)},
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/authorities", Module: rbac.ModuleRegistration, Action: rbac.ActionCreate, Handler: d.requireAuth(d.handleAppointAuthority)},
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/authorities/{authorityID}/end", Module: rbac.ModuleRegistration, Action: rbac.ActionEditDraft, Handler: d.requireAuth(d.handleEndAuthority)},
+		{Method: http.MethodPost, Pattern: "/api/v1/members/{memberID}/consents", Module: rbac.ModuleRegistration, Action: rbac.ActionCreate, Handler: d.requireAuth(d.handleRecordConsent)},
 	}
 }

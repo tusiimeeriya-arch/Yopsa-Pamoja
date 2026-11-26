@@ -22,6 +22,8 @@ import (
 	"github.com/yopsa/pamoja/backend/internal/platform/config"
 	"github.com/yopsa/pamoja/backend/internal/platform/db"
 	"github.com/yopsa/pamoja/backend/internal/platform/keyring"
+	"github.com/yopsa/pamoja/backend/internal/platform/phone"
+	"github.com/yopsa/pamoja/backend/internal/rbac"
 )
 
 // Authentication failures returned to callers. The HTTP layer maps them to
@@ -46,6 +48,7 @@ type Principal struct {
 	FamilyID    uuid.UUID
 	Roles       []string
 	Scopes      []string
+	Bindings    []rbac.Binding
 	IsStaff     bool
 	MFAVerified bool
 	StepUpAt    *time.Time
@@ -186,18 +189,7 @@ type sessionRecord struct {
 
 // NormalizePhone strips separators so equivalent inputs hash equally. It
 // never stores or logs the number itself.
-func NormalizePhone(raw string) string {
-	var b strings.Builder
-	for _, r := range strings.TrimSpace(raw) {
-		switch {
-		case r >= '0' && r <= '9', r == '+':
-			b.WriteRune(r)
-		case r == ' ', r == '-', r == '(', r == ')', r == '.':
-			// Separator: ignored.
-		}
-	}
-	return b.String()
-}
+func NormalizePhone(raw string) string { return phone.Normalize(raw) }
 
 // Login verifies credentials, applies lockout and rate limits, and opens a new
 // session family. It returns ErrInvalidCredentials for every credential
@@ -375,6 +367,10 @@ func (s *Service) Authenticate(ctx context.Context, rawToken string) (Principal,
 	if err != nil {
 		return Principal{}, ErrUnauthorized
 	}
+	bindings, err := s.bindings(ctx, userID.String())
+	if err != nil {
+		return Principal{}, err
+	}
 
 	return Principal{
 		UserID:      userID,
@@ -382,10 +378,55 @@ func (s *Service) Authenticate(ctx context.Context, rawToken string) (Principal,
 		FamilyID:    familyID,
 		Roles:       claims.Roles,
 		Scopes:      claims.Scopes,
+		Bindings:    bindings,
 		IsStaff:     session.IsStaff,
 		MFAVerified: session.MFAVerifiedAt != nil,
 		StepUpAt:    session.StepUpAt,
 	}, nil
+}
+
+// bindings loads the caller's live role grants as authorisation bindings. The
+// query runs through the definer function, which applies the effective-date
+// and status rules; a revoked or expired grant disappears immediately rather
+// than at the next token refresh.
+func (s *Service) bindings(ctx context.Context, userID string) ([]rbac.Binding, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT role, legal_entity_id::text, branch_id::text, group_id::text
+		 FROM pamoja.auth_roles($1::uuid)`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var bindings []rbac.Binding
+	for rows.Next() {
+		var role string
+		var legalEntity, branch, group *string
+		if err := rows.Scan(&role, &legalEntity, &branch, &group); err != nil {
+			return nil, err
+		}
+		binding := rbac.Binding{Role: rbac.Role(role), Scope: rbac.ScopePlatform}
+		switch {
+		case role == string(rbac.RoleMember):
+			// A member's grants are self-scoped; the group id only identifies
+			// which group the membership belongs to.
+			binding.Scope = rbac.ScopeSelf
+			if group != nil && *group != "" {
+				binding.ScopeIDs = []string{*group}
+			}
+		case group != nil && *group != "":
+			binding.Scope = rbac.ScopeGroup
+			binding.ScopeIDs = []string{*group}
+		case branch != nil && *branch != "":
+			binding.Scope = rbac.ScopeBranch
+			binding.ScopeIDs = []string{*branch}
+		case legalEntity != nil && *legalEntity != "":
+			binding.Scope = rbac.ScopeLegalEntity
+			binding.ScopeIDs = []string{*legalEntity}
+		}
+		bindings = append(bindings, binding)
+	}
+	return bindings, rows.Err()
 }
 
 // Logout revokes the caller's whole session family.

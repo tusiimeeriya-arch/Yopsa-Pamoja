@@ -63,12 +63,17 @@ var landingPage = template.Must(template.New("landing").Parse(`<!doctype html>
       <li><code>POST /api/v1/auth/logout</code> — revoke the session family</li>
       <li><code>GET /api/v1/auth/sessions</code> — the caller's devices</li>
       <li><code>POST /api/v1/auth/step-up</code> — fresh MFA before a sensitive action</li>
+      <li><code>GET /api/v1/group-types</code> — group forms reference data</li>
+      <li><code>POST /api/v1/groups</code> — register a group (draft)</li>
+      <li><code>GET /api/v1/groups?branch_id=…</code> — groups in a branch</li>
+      <li><code>POST /api/v1/groups/{id}/members</code> — add a member</li>
+      <li><code>POST /api/v1/groups/{id}/review</code> — activate, return or reject</li>
     </ul>
   </section>
   <section class="card">
     <h2>What this build contains</h2>
     <p>The platform core: configuration, structured logging with redaction, security headers, request correlation, health probes and the machine-checked RBAC matrix, plus Argon2id sign-in, TOTP second factors, short-lived access tokens with rotating refresh tokens, session revocation and step-up.</p>
-    <p>PostgreSQL row-level security, the append-only hash-chained audit log and the idempotency store are in place. Domain modules (registration, meetings, payments, loans, dashboards) follow in P2–P6; the Flutter client follows in P2.</p>
+    <p>PostgreSQL row-level security, the append-only hash-chained audit log and the idempotency store are in place. P2 adds the registration core: legal entities, branches, group types, the group lifecycle (draft, submitted, under review, active, returned, rejected), memberships, consent records and authority appointments — each scoped by the RBAC engine and row-level security. Meetings, payments, loans and dashboards follow in P3–P6.</p>
     <p>Documentation lives in the repository's <code>docs/</code> directory; the README is the entry point.</p>
   </section>
 </main>

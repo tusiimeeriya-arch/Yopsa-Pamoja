@@ -152,7 +152,7 @@ summary. A gate that could not run is listed with the reason and marked
 - Security tests create their own records and clean them up; they never mutate
   records they did not create.
 
-## 6. Status at P0
+## 6. Status at P2
 
 | Check | Command | Result |
 |---|---|---|
@@ -160,7 +160,7 @@ summary. A gate that could not run is listed with the reason and marked
 | Go vet | `go vet ./...` | Passed |
 | gofmt | `gofmt -l .` | Empty |
 | golangci-lint | `golangci-lint run` (v2.15.0) | Passed — 0 issues |
-| Go tests | `go test ./...` (also `-race`) | Passed — `httpapi`, `platform/config`, `platform/logging`, `rbac` |
+| Go tests | `go test ./...` (also `-race`) | Passed — `audit`, `auth`, `groups`, `httpapi`, `platform/config`, `platform/logging`, `rbac` |
 | Coverage gate | `scripts/check-coverage.sh` | `rbac` 87.6 % (threshold 85 %); `payments`, `loans`, `audit`, `attendance` reported pending |
 | OpenAPI lint | `@redocly/cli lint backend/api/openapi.yaml` | Valid, 4 warnings (no 4xx responses declared on platform probes) |
 | Dev stack boot | `docker compose -f deploy/docker-compose.dev.yml` equivalent | `db` healthy, `migrate` exit 0, `api` healthy, `/healthz` 200, `/readyz` `database: ok, schema: ok` |
@@ -169,7 +169,11 @@ summary. A gate that could not run is listed with the reason and marked
 | RBAC allow/deny | `TestAuthorize` | Passed — 20 cases |
 | Separation of duties | `TestSeparationOfDuties` | Passed — 10 cases |
 | Doc drift | `TestDocMatchesMatrix` | Passed |
-| Route authorisation coverage | `TestEveryRouteDeclaresAuthorization` | Passed — 4 public routes, no undeclared route |
+| Route authorisation coverage | `TestEveryRouteDeclaresAuthorization` | Passed — 7 public routes, no undeclared route |
+| Generated route × role × scope suite (T-RBAC-05) | `TestRouteRoleScopeMatrix` | Passed — every route, 10 roles, 5 binding scopes |
+| Registration lifecycle (P2) | `TestGroupRegistrationLifecycle`, `TestReviewerCannotActivateOwnGroup`, `TestMembershipAndAuthorityLifecycle`, `TestConsentUpsertKeepsOneRowPerNotice` | Passed — database integration |
+| RLS isolation | `TestRLSHidesRowsWithoutScopes`, `TestGroupRegistrationLifecycle` (cross-branch) | Passed |
+| SQL injection payload inert (T-SEC-13) | `TestSQLInjectionPayloadIsInert` | Passed — payload stored literally, table intact |
 | Log redaction | `TestRedactSensitiveAttributes` | Passed |
 | Config validation | `TestLoad*` | Passed |
 | Flutter analyze/test | — | **Not verified here** (no Flutter SDK in this environment) |

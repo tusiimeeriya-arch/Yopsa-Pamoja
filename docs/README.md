@@ -16,8 +16,8 @@ is complete for the current phase.
 | [TEST_PLAN.md](TEST_PLAN.md) | Test levels, coverage gates and the required test catalogue with IDs | P0 — delivered |
 | [ADR/](ADR/) | Architecture decision records | P0 — 10 records |
 | SECURITY_CONTROLS.md | OWASP ASVS L2 / MASVS control map with proving test per control | P1 onwards |
-| DATA_PROTECTION.md | Uganda DPPA notices, lawful basis, retention, correction, export, deletion | P2 onwards |
-| API.md | Human-readable API guide generated alongside `backend/api/openapi.yaml` | P2 onwards |
+| DATA_PROTECTION.md | Uganda DPPA notices, lawful basis, retention, correction, export, deletion | P2 — delivered (retention awaiting A-006) |
+| API.md | Human-readable API guide generated alongside `backend/api/openapi.yaml` | P2 — delivered |
 | OPERATIONS_RUNBOOK.md | Daily/weekly/monthly routines, incident response, key rotation, restore | P9 |
 | USER_GUIDES/ | Plain-language guides per role | P10 |
 | VERIFICATION_REPORT.md | Command, date and output for every gate | P10 |
