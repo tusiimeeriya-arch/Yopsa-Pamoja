@@ -52,7 +52,31 @@ services:
       - |
         psql -v ON_ERROR_STOP=1 -f /workspace/backend/db/migrations/000001_baseline.up.sql
         psql -v ON_ERROR_STOP=1 -f /workspace/backend/db/migrations/000002_p1_auth_rls.up.sql
+        psql -v ON_ERROR_STOP=1 -f /workspace/backend/db/migrations/000003_domain.up.sql
         psql -v ON_ERROR_STOP=1 -c "ALTER ROLE pamoja_app PASSWORD '$$APP_DB_PASSWORD'"
+    restart: "no"
+
+  # Demo portfolio for local testing: six groups, members, five months of
+  # registers and savings entries, loans across the workflow and tasks.
+  # Idempotent: it exits immediately when a user already exists.
+  seed:
+    image: golang:1.26
+    working_dir: /workspace/backend
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - "..:/workspace"
+      - pamoja-dev-gomod:/go/pkg/mod
+    environment:
+      APP_ENV: development
+      SEED_DATABASE_URL: postgres://pamoja:pamoja_dev_password@db:5432/pamoja?sslmode=disable
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-local-development-only-token-key}
+      PAMOJA_LOOKUP_KEY: ${PAMOJA_LOOKUP_KEY:-local-development-only-lookup-key}
+      PAMOJA_MASTER_KEY: ${PAMOJA_MASTER_KEY:-local-development-only-master-key}
+    command: ["sh", "-ec", "go mod download && exec go run ./cmd/seed"]
     restart: "no"
 
   api:
@@ -62,6 +86,8 @@ services:
       db:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      seed:
         condition: service_completed_successfully
     volumes:
       - "..:/workspace"

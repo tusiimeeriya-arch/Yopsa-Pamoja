@@ -41,6 +41,8 @@ func TestEveryRouteDeclaresAuthorization(t *testing.T) {
 func TestPublicRoutesAreOnlyPlatformEndpoints(t *testing.T) {
 	allowed := map[string]bool{
 		"GET /":                     true,
+		"GET /assets/*":             true,
+		"GET /favicon.svg":          true,
 		"GET /healthz":              true,
 		"GET /readyz":               true,
 		"GET /api/v1/meta":          true,

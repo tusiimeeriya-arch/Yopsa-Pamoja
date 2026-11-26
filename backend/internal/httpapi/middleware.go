@@ -50,8 +50,14 @@ func securityHeaders(isProduction bool) func(http.Handler) http.Handler {
 			h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 			h.Set("Cross-Origin-Opener-Policy", "same-origin")
 			h.Set("Cross-Origin-Resource-Policy", "same-origin")
+			// The web client is served from this origin: its own scripts and
+			// styles are the only executable content, and it may only call
+			// this API. Inline styles are allowed because a few elements carry
+			// data-driven widths (progress bars, charts).
 			h.Set("Content-Security-Policy",
-				"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+				"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
+					"img-src 'self' data:; font-src 'self'; connect-src 'self'; "+
+					"base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 			if isProduction {
 				h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 			}
