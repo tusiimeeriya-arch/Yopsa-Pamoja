@@ -1,0 +1,280 @@
+# Yopsa Pamoja — machine-checked RBAC matrix.
+#
+# This file is the single source of truth for authorisation. docs/RBAC.md is
+# generated from it (make rbac-doc) and a test fails when the two drift apart.
+# Default deny: a role may do exactly what is listed here, nothing more.
+#
+# scope is the widest scope at which the grant applies:
+#   platform > legal_entity > branch > group > self
+# A binding narrower than the grant scope does not satisfy it.
+
+version: 1
+
+scope_types: [platform, legal_entity, branch, group, self]
+
+actions:
+  - view
+  - create
+  - edit_draft
+  - submit
+  - lock
+  - verify
+  - return
+  - approve
+  - decline
+  - disburse
+  - post
+  - correct
+  - amend
+  - resolve
+  - moderate
+  - export
+  - configure
+  - grant_role
+  - revoke_role
+  - review_activate
+  - appraise
+  - review_operations
+  - accept_offer
+  - close
+  - revoke
+  - step_up
+
+roles:
+  member:
+    description: Group member. Sees and acts on their own records only.
+    may_handle_finance: false
+  secretary:
+    description: Keeps the meeting register, minutes, resolutions and action items for assigned groups.
+    may_handle_finance: false
+  treasurer:
+    description: Records members' payment entries and locks group submissions. Never verifies them.
+    may_handle_finance: true
+  chairperson:
+    description: Authorised representative of a group; may bind the group in a borrowing application.
+    may_handle_finance: false
+  field_officer:
+    description: Supports and supervises assigned groups; registers groups, appraises borrowing applications.
+    may_handle_finance: false
+  verifier:
+    description: Independent finance reviewer; verifies receipts, confirms postings, confirms disbursement.
+    may_handle_finance: true
+  credit_approver:
+    description: Operations and credit approver; reviews and approves or declines borrowing applications.
+    may_handle_finance: true
+  management:
+    description: Management and risk. Read-only across the legal entity, plus policy configuration and reports.
+    may_handle_finance: false
+  auditor:
+    description: Read-only access with evidence and export rights. Cannot change any record.
+    may_handle_finance: false
+  it_admin:
+    description: Technical administration of users, role grants, integrations and configuration. No financial rights.
+    may_handle_finance: false
+
+modules:
+  auth: { description: The caller's own sessions and step-up re-authentication }
+  registration: { description: Legal entity, branch, group, membership, authority and consent records }
+  meetings: { description: Meetings, registers, attendance, minutes, resolutions, action items }
+  payments: { description: Payment entries, group submissions, receipts, corrections }
+  reconciliation: { description: Allocation, ledger posting confirmation, finance exceptions }
+  loans: { description: Group borrowing applications, appraisals, decisions, offers, disbursements }
+  dashboard: { description: Management dashboard cards and drill-downs }
+  ranking: { description: Group ranking policy, eligibility and snapshots }
+  learning: { description: Learning items, assignments and progress }
+  comments: { description: Group-visible and restricted comments and moderation }
+  disputes: { description: Attendance and payment disputes }
+  tasks: { description: Follow-up tasks with owner and deadline }
+  notifications: { description: In-app, SMS, WhatsApp and email notifications }
+  reports: { description: Exports and printed reports }
+  audit: { description: Append-only audit log and integrity evidence }
+  config: { description: Versioned policy configuration values }
+  users_roles: { description: User accounts and scoped role grants }
+  integrations: { description: Ledger, SMS and inbound integration administration }
+
+grants:
+  # ---- every role manages its own sessions and step-up --------------------
+  - { role: member, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: secretary, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: treasurer, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: chairperson, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: field_officer, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: verifier, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: credit_approver, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: management, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: auditor, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: it_admin, module: auth, actions: [view, revoke, step_up], scope: self }
+
+  # ---- member: own records only -------------------------------------------
+  - { role: member, module: registration, actions: [view], scope: self }
+  - { role: member, module: meetings, actions: [view], scope: self }
+  - { role: member, module: payments, actions: [view], scope: self }
+  - { role: member, module: learning, actions: [view], scope: self }
+  - { role: member, module: comments, actions: [view, create], scope: self }
+  - { role: member, module: disputes, actions: [view, create], scope: self }
+  - { role: member, module: tasks, actions: [view], scope: self }
+  - { role: member, module: notifications, actions: [view], scope: self }
+
+  # ---- secretary: the meeting record for assigned groups ------------------
+  - { role: secretary, module: registration, actions: [view], scope: group }
+  - { role: secretary, module: meetings, actions: [view, create, edit_draft, amend, close], scope: group }
+  - { role: secretary, module: payments, actions: [view], scope: group }
+  - { role: secretary, module: learning, actions: [view], scope: group }
+  - { role: secretary, module: comments, actions: [view, moderate], scope: group }
+  - { role: secretary, module: disputes, actions: [view], scope: group }
+  - { role: secretary, module: tasks, actions: [view, create, close], scope: group }
+  - { role: secretary, module: notifications, actions: [view], scope: self }
+
+  # ---- treasurer: records and locks, never verifies -----------------------
+  - { role: treasurer, module: registration, actions: [view], scope: group }
+  - { role: treasurer, module: meetings, actions: [view], scope: group }
+  - { role: treasurer, module: payments, actions: [view, create, edit_draft, submit, lock], scope: group }
+  - { role: treasurer, module: reconciliation, actions: [view], scope: group }
+  - { role: treasurer, module: loans, actions: [view], scope: group }
+  - { role: treasurer, module: disputes, actions: [view], scope: group }
+  - { role: treasurer, module: tasks, actions: [view, create, close], scope: group }
+  - { role: treasurer, module: learning, actions: [view], scope: group }
+  - { role: treasurer, module: notifications, actions: [view], scope: self }
+
+  # ---- chairperson: binds the group in a borrowing application ------------
+  - { role: chairperson, module: registration, actions: [view], scope: group }
+  - { role: chairperson, module: meetings, actions: [view], scope: group }
+  - { role: chairperson, module: payments, actions: [view], scope: group }
+  - { role: chairperson, module: loans, actions: [view, create, submit, accept_offer], scope: group }
+  - { role: chairperson, module: disputes, actions: [view], scope: group }
+  - { role: chairperson, module: tasks, actions: [view, create, close], scope: group }
+  - { role: chairperson, module: learning, actions: [view], scope: group }
+  - { role: chairperson, module: notifications, actions: [view], scope: self }
+
+  # ---- field officer: registration and appraisal --------------------------
+  - { role: field_officer, module: registration, actions: [view, create, edit_draft, submit], scope: branch }
+  - { role: field_officer, module: meetings, actions: [view], scope: branch }
+  - { role: field_officer, module: payments, actions: [view], scope: branch }
+  - { role: field_officer, module: loans, actions: [view, create, edit_draft, submit, appraise], scope: branch }
+  - { role: field_officer, module: dashboard, actions: [view], scope: branch }
+  - { role: field_officer, module: disputes, actions: [view, resolve], scope: branch }
+  - { role: field_officer, module: tasks, actions: [view, create, close], scope: branch }
+  - { role: field_officer, module: learning, actions: [view], scope: branch }
+  - { role: field_officer, module: reports, actions: [view, export], scope: branch }
+  - { role: field_officer, module: notifications, actions: [view], scope: self }
+
+  # ---- verifier / finance -------------------------------------------------
+  - { role: verifier, module: payments, actions: [view, verify, return, correct], scope: branch }
+  - { role: verifier, module: reconciliation, actions: [view, post], scope: branch }
+  - { role: verifier, module: loans, actions: [view, disburse], scope: branch }
+  - { role: verifier, module: disputes, actions: [view, resolve], scope: branch }
+  - { role: verifier, module: dashboard, actions: [view], scope: branch }
+  - { role: verifier, module: tasks, actions: [view, close], scope: branch }
+  - { role: verifier, module: reports, actions: [view, export], scope: branch }
+  - { role: verifier, module: notifications, actions: [view], scope: self }
+
+  # ---- operations and credit approver ------------------------------------
+  - { role: credit_approver, module: registration, actions: [view, review_activate, return], scope: branch }
+  - { role: credit_approver, module: loans, actions: [view, review_operations, approve, decline], scope: branch }
+  - { role: credit_approver, module: payments, actions: [view], scope: branch }
+  - { role: credit_approver, module: reconciliation, actions: [view], scope: branch }
+  - { role: credit_approver, module: dashboard, actions: [view], scope: branch }
+  - { role: credit_approver, module: ranking, actions: [view], scope: branch }
+  - { role: credit_approver, module: disputes, actions: [view], scope: branch }
+  - { role: credit_approver, module: reports, actions: [view, export], scope: branch }
+  - { role: credit_approver, module: tasks, actions: [view, close], scope: branch }
+  - { role: credit_approver, module: notifications, actions: [view], scope: self }
+
+  # ---- management / risk: read across the entity, own policy -------------
+  - { role: management, module: registration, actions: [view], scope: legal_entity }
+  - { role: management, module: meetings, actions: [view], scope: legal_entity }
+  - { role: management, module: payments, actions: [view], scope: legal_entity }
+  - { role: management, module: reconciliation, actions: [view], scope: legal_entity }
+  - { role: management, module: loans, actions: [view], scope: legal_entity }
+  - { role: management, module: dashboard, actions: [view], scope: legal_entity }
+  - { role: management, module: ranking, actions: [view, configure], scope: legal_entity }
+  - { role: management, module: learning, actions: [view], scope: legal_entity }
+  - { role: management, module: comments, actions: [view], scope: legal_entity }
+  - { role: management, module: disputes, actions: [view], scope: legal_entity }
+  - { role: management, module: tasks, actions: [view], scope: legal_entity }
+  - { role: management, module: reports, actions: [view, export], scope: legal_entity }
+  - { role: management, module: audit, actions: [view], scope: legal_entity }
+  - { role: management, module: config, actions: [view, configure], scope: legal_entity }
+  - { role: management, module: notifications, actions: [view], scope: self }
+
+  # ---- auditor: read-only, with evidence and export ----------------------
+  - { role: auditor, module: registration, actions: [view], scope: legal_entity }
+  - { role: auditor, module: meetings, actions: [view], scope: legal_entity }
+  - { role: auditor, module: payments, actions: [view], scope: legal_entity }
+  - { role: auditor, module: reconciliation, actions: [view], scope: legal_entity }
+  - { role: auditor, module: loans, actions: [view], scope: legal_entity }
+  - { role: auditor, module: dashboard, actions: [view], scope: legal_entity }
+  - { role: auditor, module: ranking, actions: [view], scope: legal_entity }
+  - { role: auditor, module: learning, actions: [view], scope: legal_entity }
+  - { role: auditor, module: comments, actions: [view], scope: legal_entity }
+  - { role: auditor, module: disputes, actions: [view], scope: legal_entity }
+  - { role: auditor, module: tasks, actions: [view], scope: legal_entity }
+  - { role: auditor, module: reports, actions: [view, export], scope: legal_entity }
+  - { role: auditor, module: audit, actions: [view, export], scope: legal_entity }
+
+  # ---- IT administrator: identity and integration plumbing only ----------
+  - { role: it_admin, module: users_roles, actions: [view, grant_role, revoke_role], scope: legal_entity }
+  - { role: it_admin, module: config, actions: [view], scope: legal_entity }
+  - { role: it_admin, module: integrations, actions: [view], scope: legal_entity }
+  - { role: it_admin, module: audit, actions: [view], scope: legal_entity }
+  - { role: it_admin, module: notifications, actions: [view], scope: self }
+
+# Separation-of-duties rules. Checked in the service layer AND (where the data
+# model allows it) by PostgreSQL triggers. Actor identity is always distinct
+# from every listed context field.
+sod:
+  - id: SD-01
+    module: payments
+    action: verify
+    description: A verifier may not verify a submission containing an entry they recorded.
+    must_differ_from: [recorder]
+  - id: SD-02
+    module: payments
+    action: verify
+    description: A verifier may not verify their own submission or receipt.
+    must_differ_from: [submitter, recorder]
+  - id: SD-03
+    module: loans
+    action: approve
+    description: The approver may not be the applicant or the officer who appraised the application.
+    must_differ_from: [applicant, appraiser]
+  - id: SD-04
+    module: loans
+    action: disburse
+    description: Disbursement is confirmed by Finance, independent of the approver.
+    must_differ_from: [approver]
+  - id: SD-05
+    module: loans
+    action: review_operations
+    description: Operations review is done by someone other than the appraising officer.
+    must_differ_from: [appraiser]
+  - id: SD-06
+    module: registration
+    action: review_activate
+    description: A group is activated only by a reviewer other than its creator.
+    must_differ_from: [creator]
+  - id: SD-07
+    module: payments
+    action: correct
+    description: A correction is authorised by someone other than its requester and the original recorder.
+    must_differ_from: [requester, recorder]
+  - id: SD-08
+    module: reconciliation
+    action: post
+    description: Posting is confirmed by someone other than the officer who recorded the receipt.
+    must_differ_from: [recorder]
+  - id: SD-09
+    module: meetings
+    action: amend
+    description: A closed register or minutes are amended only with review by a second person.
+    must_differ_from: [reviewer]
+  - id: SD-10
+    module: users_roles
+    action: grant_role
+    description: Role grants and revocations need a second administrator's approval (four eyes).
+    requires_second_person: true
+  - id: SD-11
+    module: users_roles
+    action: revoke_role
+    description: Role revocations need a second administrator's approval (four eyes).
+    requires_second_person: true
