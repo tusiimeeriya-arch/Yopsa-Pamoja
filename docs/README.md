@@ -10,6 +10,7 @@ is complete for the current phase.
 | [ERD.md](ERD.md) | Logical data model per domain, invariants, money and identifier conventions | P0 — delivered |
 | [STATE_MACHINES.md](STATE_MACHINES.md) | Every workflow state, its transitions, guards and who may trigger them | P0 — delivered |
 | [RBAC.md](RBAC.md) | Generated role × module × action × scope matrix and separation-of-duties rules | P0 — generated from `backend/internal/rbac/matrix.yaml` |
+| [AUTH.md](AUTH.md) | Authentication, tokens, sessions, step-up, database roles and row-level security | P1 — implemented |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | STRIDE analysis for payments, loans, auth, uploads and offline sync, with test mapping | P0 — delivered |
 | [ASSUMPTIONS.md](ASSUMPTIONS.md) | Every policy value not fixed by the brief, with its safe default and approval owner | P0 — delivered, awaiting management approval |
 | [TEST_PLAN.md](TEST_PLAN.md) | Test levels, coverage gates and the required test catalogue with IDs | P0 — delivered |

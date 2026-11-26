@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const phase = "P0 — plan and skeleton"
+const phase = "P1 — platform core (authentication and RLS)"
 
 func (d Deps) handleLanding(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

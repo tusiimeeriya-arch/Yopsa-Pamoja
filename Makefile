@@ -6,7 +6,7 @@ GO := docker run --rm -v "$(CURDIR):/workspace" -w /workspace/backend -v pamoja-
 LINT_IMAGE ?= golangci/golangci-lint:v2.15.0
 DEV_COMPOSE := docker compose -f deploy/docker-compose.dev.yml
 
-.PHONY: help setup dev dev-down logs migrate test coverage lint fmt scan build rbac-doc openapi-lint clean
+.PHONY: help setup dev dev-down logs migrate test coverage lint fmt scan build rbac-doc audit-verify openapi-lint clean
 
 help: ## Show the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -51,6 +51,9 @@ build: ## Build API and worker binaries
 
 rbac-doc: ## Regenerate docs/RBAC.md from the RBAC matrix
 	$(GO) go run ./tools/rbacdoc -out ../docs/RBAC.md
+
+audit-verify: ## Walk the append-only audit hash chain and report the first break
+	$(DEV_COMPOSE) run --rm --no-deps api go run ./cmd/auditverify
 
 openapi-lint: ## Validate the OpenAPI 3.1 specification
 	docker run --rm -v "$(CURDIR):/repo" -w /repo node:22-alpine sh -ec 'npx --yes @redocly/cli@latest lint backend/api/openapi.yaml'

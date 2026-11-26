@@ -1,7 +1,7 @@
 # Architecture
 
-**Status:** P0 baseline — delivered for approval. Implementation status per
-component is in [§14](#14-implementation-status).
+**Status:** P0 plan delivered; P1 platform core implemented. Implementation
+status per component is in [§14](#14-implementation-status).
 **Source:** Yopsa Pamoja Concept Document v1.0 (31 October 2026).
 
 ## 1. Purpose and boundaries
@@ -342,8 +342,9 @@ non-root with read-only root filesystems and resource limits.
 | API landing/status page and OpenAPI skeleton | P0 | Implemented |
 | Flutter client shell (theme, routing, home scaffold) | P0 | Skeleton, not compiled here (no Flutter SDK in this environment) |
 | CI pipeline skeleton, Makefile, dev compose | P0 | Written; pipeline runs on GitHub, not verified here |
-| Authentication, sessions, step-up | P1 | Not started |
-| RLS policies, audit chain, idempotency store, storage service | P1 | Not started |
+| Authentication: Argon2id, TOTP, access/refresh tokens, rotation with reuse detection, lockout, step-up ([AUTH.md](AUTH.md)) | P1 | Implemented and tested (unit + database integration) |
+| RLS policies, least-privilege database roles, append-only audit hash chain, idempotency store ([AUTH.md](AUTH.md)) | P1 | Implemented and tested (database integration) |
+| Storage service: private object storage, signed URLs, scanning, EXIF stripping | P1/P3 | Not started |
 | Domain modules, dashboards, offline sync, hardening, deployment | P2–P10 | Not started |
 
 ## 15. Open questions for approval

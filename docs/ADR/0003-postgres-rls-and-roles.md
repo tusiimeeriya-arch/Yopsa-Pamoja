@@ -12,13 +12,19 @@ the application must not be able to disable its own guard rails.
 
 ## Decision
 
-Three database roles:
+Four database roles:
 
 | Role | Purpose | Rights |
 |---|---|---|
 | `pamoja_owner` | Owns the schema; runs migrations | DDL, owns tables |
 | `pamoja_app` | Used by the API and worker | `SELECT/INSERT/UPDATE` on permitted tables, no `DELETE` on protected tables, **no** DDL, **not** owner, **not** superuser, **not** `BYPASSRLS` |
 | `pamoja_readonly` | Reporting and integrity verification | `SELECT` only, still subject to RLS |
+| `pamoja_auth` | **No login.** Owns only the fixed `SECURITY DEFINER` functions that must read identity rows before a session exists (login lookup, refresh rotation, audit append and verification) | `BYPASSRLS`, confined to those functions; the API role cannot borrow it |
+
+The `pamoja_auth` role was added in P1 because authentication necessarily reads
+`app_user`/`user_credential` before any actor exists. Keeping those reads in
+reviewed, fixed functions is narrower than granting the API role a permissive
+policy on the identity tables.
 
 - RLS is enabled and **forced** on every tenant/scope table.
 - Policies read session settings set at the start of each transaction:

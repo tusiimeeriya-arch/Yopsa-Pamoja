@@ -14,8 +14,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/yopsa/pamoja/backend/internal/audit"
+	"github.com/yopsa/pamoja/backend/internal/auth"
 	"github.com/yopsa/pamoja/backend/internal/httpapi"
 	"github.com/yopsa/pamoja/backend/internal/platform/config"
+	"github.com/yopsa/pamoja/backend/internal/platform/keyring"
 	"github.com/yopsa/pamoja/backend/internal/platform/logging"
 )
 
@@ -52,9 +55,22 @@ func run() error {
 		return err
 	}
 
+	keys, err := keyring.NewLocal(cfg.Auth.MasterKey, cfg.Auth.LookupKey)
+	if err != nil {
+		return err
+	}
+	authService := auth.NewService(auth.Options{
+		Pool:   pool,
+		Config: cfg.Auth,
+		Env:    string(cfg.AppEnv),
+		Keys:   keys,
+		Audit:  audit.New(pool),
+		Logger: log,
+	})
+
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           httpapi.New(httpapi.Deps{Pool: pool, Logger: log, Config: cfg, Version: version}),
+		Handler:           httpapi.New(httpapi.Deps{Pool: pool, Logger: log, Config: cfg, Version: version, Auth: authService}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,

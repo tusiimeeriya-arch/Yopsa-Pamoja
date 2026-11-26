@@ -65,23 +65,25 @@ Authorisation is **default deny**. `Authorize(actor, module, action, resource)` 
 | `review_operations` | Perform the mandatory operations review of a borrowing application. |
 | `accept_offer` | Accept a loan offer on behalf of the group. |
 | `close` | Close a meeting, task or group through its controlled transition. |
+| `revoke` |  |
+| `step_up` |  |
 
 ## Coverage summary
 
 ✓ = the role has at least one grant on the module. Actions and scope are in the detail below.
 
-| Role | audit | comments | config | dashboard | disputes | integrations | learning | loans | meetings | notifications | payments | ranking | reconciliation | registration | reports | tasks | users_roles |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `member` | — | ✓ | — | — | ✓ | — | ✓ | — | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | — |
-| `secretary` | — | ✓ | — | — | ✓ | — | ✓ | — | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | — |
-| `treasurer` | — | — | — | — | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — | ✓ | — |
-| `chairperson` | — | — | — | — | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | — |
-| `field_officer` | — | — | — | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | ✓ | — |
-| `verifier` | — | — | — | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | — | ✓ | ✓ | — |
-| `credit_approver` | — | — | — | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| `management` | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| `auditor` | ✓ | ✓ | — | ✓ | ✓ | — | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| `it_admin` | ✓ | — | ✓ | — | — | ✓ | — | — | — | ✓ | — | — | — | — | — | — | ✓ |
+| Role | audit | auth | comments | config | dashboard | disputes | integrations | learning | loans | meetings | notifications | payments | ranking | reconciliation | registration | reports | tasks | users_roles |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `member` | — | ✓ | ✓ | — | — | ✓ | — | ✓ | — | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | — |
+| `secretary` | — | ✓ | ✓ | — | — | ✓ | — | ✓ | — | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | — |
+| `treasurer` | — | ✓ | — | — | — | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | — | ✓ | — |
+| `chairperson` | — | ✓ | — | — | — | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | ✓ | — |
+| `field_officer` | — | ✓ | — | — | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | ✓ | ✓ | — |
+| `verifier` | — | ✓ | — | — | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | — | ✓ | — | ✓ | ✓ | — |
+| `credit_approver` | — | ✓ | — | — | ✓ | ✓ | — | — | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `management` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `auditor` | ✓ | ✓ | ✓ | — | ✓ | ✓ | — | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `it_admin` | ✓ | ✓ | — | ✓ | — | — | ✓ | — | — | — | ✓ | — | — | — | — | — | — | ✓ |
 
 ## Grants by role
 
@@ -89,6 +91,7 @@ Authorisation is **default deny**. `Authorize(actor, module, action, resource)` 
 
 | Module | Actions | Scope |
 |---|---|---|
+| `auth` | `view`, `revoke`, `step_up` | `self` |
 | `registration` | `view` | `self` |
 | `meetings` | `view` | `self` |
 | `payments` | `view` | `self` |
@@ -102,6 +105,7 @@ Authorisation is **default deny**. `Authorize(actor, module, action, resource)` 
 
 | Module | Actions | Scope |
 |---|---|---|
+| `auth` | `view`, `revoke`, `step_up` | `self` |
 | `registration` | `view` | `group` |
 | `meetings` | `view`, `create`, `edit_draft`, `amend`, `close` | `group` |
 | `payments` | `view` | `group` |
@@ -115,6 +119,7 @@ Authorisation is **default deny**. `Authorize(actor, module, action, resource)` 
 
 | Module | Actions | Scope |
 |---|---|---|
+| `auth` | `view`, `revoke`, `step_up` | `self` |
 | `registration` | `view` | `group` |
 | `meetings` | `view` | `group` |
 | `payments` | `view`, `create`, `edit_draft`, `submit`, `lock` | `group` |
@@ -129,6 +134,7 @@ Authorisation is **default deny**. `Authorize(actor, module, action, resource)` 
 
 | Module | Actions | Scope |
 |---|---|---|
+| `auth` | `view`, `revoke`, `step_up` | `self` |
 | `registration` | `view` | `group` |
 | `meetings` | `view` | `group` |
 | `payments` | `view` | `group` |
@@ -142,6 +148,7 @@ Authorisation is **default deny**. `Authorize(actor, module, action, resource)` 
 
 | Module | Actions | Scope |
 |---|---|---|
+| `auth` | `view`, `revoke`, `step_up` | `self` |
 | `registration` | `view`, `create`, `edit_draft`, `submit` | `branch` |
 | `meetings` | `view` | `branch` |
 | `payments` | `view` | `branch` |
@@ -157,6 +164,7 @@ Authorisation is **default deny**. `Authorize(actor, module, action, resource)` 
 
 | Module | Actions | Scope |
 |---|---|---|
+| `auth` | `view`, `revoke`, `step_up` | `self` |
 | `payments` | `view`, `verify`, `return`, `correct` | `branch` |
 | `reconciliation` | `view`, `post` | `branch` |
 | `loans` | `view`, `disburse` | `branch` |
@@ -170,6 +178,7 @@ Authorisation is **default deny**. `Authorize(actor, module, action, resource)` 
 
 | Module | Actions | Scope |
 |---|---|---|
+| `auth` | `view`, `revoke`, `step_up` | `self` |
 | `registration` | `view`, `review_activate`, `return` | `branch` |
 | `loans` | `view`, `review_operations`, `approve`, `decline` | `branch` |
 | `payments` | `view` | `branch` |
@@ -185,6 +194,7 @@ Authorisation is **default deny**. `Authorize(actor, module, action, resource)` 
 
 | Module | Actions | Scope |
 |---|---|---|
+| `auth` | `view`, `revoke`, `step_up` | `self` |
 | `registration` | `view` | `legal_entity` |
 | `meetings` | `view` | `legal_entity` |
 | `payments` | `view` | `legal_entity` |
@@ -205,6 +215,7 @@ Authorisation is **default deny**. `Authorize(actor, module, action, resource)` 
 
 | Module | Actions | Scope |
 |---|---|---|
+| `auth` | `view`, `revoke`, `step_up` | `self` |
 | `registration` | `view` | `legal_entity` |
 | `meetings` | `view` | `legal_entity` |
 | `payments` | `view` | `legal_entity` |
@@ -223,6 +234,7 @@ Authorisation is **default deny**. `Authorize(actor, module, action, resource)` 
 
 | Module | Actions | Scope |
 |---|---|---|
+| `auth` | `view`, `revoke`, `step_up` | `self` |
 | `users_roles` | `view`, `grant_role`, `revoke_role` | `legal_entity` |
 | `config` | `view` | `legal_entity` |
 | `integrations` | `view` | `legal_entity` |

@@ -1,11 +1,13 @@
 # Backend packages
 
 ```
-cmd/api      HTTP entry point
-cmd/worker   asynchronous jobs (river queue)
-cmd/migrate  schema migrations (P1)
+cmd/api          HTTP entry point
+cmd/worker       asynchronous jobs (river queue)
+cmd/auditverify  walks the append-only audit hash chain, exits non-zero on a break
+cmd/migrate      schema migrations (deployment phase)
 internal/
-  platform/  cross-cutting: config, logging, clock, ids, errors, telemetry
+  platform/  cross-cutting: config, logging, keyring (envelope encryption),
+             db (RLS-scoped transactions), clock, ids, errors, telemetry
   httpapi/   router, middleware, route registry, transport encoding
   rbac/      authorisation engine + machine-checked matrix
   auth/      credentials, TOTP, sessions, refresh families

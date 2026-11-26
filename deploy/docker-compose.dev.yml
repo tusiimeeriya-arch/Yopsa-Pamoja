@@ -4,6 +4,13 @@
 # `go run`, so edits are picked up on restart; the Base44 preview environment is
 # configured separately and adds live reload.
 #
+# Migrations run as the owner role; the API connects as the least-privilege
+# pamoja_app role so row-level security is enforced.
+#
+# The three key materials below are development defaults only. Override them
+# with the real values (or an env file) before running against real data:
+#   AUTH_TOKEN_SECRET=... PAMOJA_LOOKUP_KEY=... PAMOJA_MASTER_KEY=... make dev
+#
 # Usage: docker compose -f deploy/docker-compose.dev.yml up --build
 # API:   http://localhost:8080
 
@@ -35,10 +42,17 @@ services:
     volumes:
       - "..:/workspace:ro"
     environment:
-      DATABASE_URL: postgres://pamoja:pamoja_dev_password@db:5432/pamoja?sslmode=disable
+      PGHOST: db
+      PGUSER: pamoja
+      PGPASSWORD: pamoja_dev_password
+      PGDATABASE: pamoja
+      APP_DB_PASSWORD: pamoja_app_dev_password
     entrypoint: ["sh", "-ec"]
     command:
-      - 'psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /workspace/backend/db/migrations/000001_baseline.up.sql'
+      - |
+        psql -v ON_ERROR_STOP=1 -f /workspace/backend/db/migrations/000001_baseline.up.sql
+        psql -v ON_ERROR_STOP=1 -f /workspace/backend/db/migrations/000002_p1_auth_rls.up.sql
+        psql -v ON_ERROR_STOP=1 -c "ALTER ROLE pamoja_app PASSWORD '$$APP_DB_PASSWORD'"
     restart: "no"
 
   api:
@@ -56,7 +70,10 @@ services:
       APP_ENV: development
       PORT: "3000"
       LOG_LEVEL: debug
-      DATABASE_URL: postgres://pamoja:pamoja_dev_password@db:5432/pamoja?sslmode=disable
+      DATABASE_URL: postgres://pamoja_app:pamoja_app_dev_password@db:5432/pamoja?sslmode=disable
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-local-development-only-token-key}
+      PAMOJA_LOOKUP_KEY: ${PAMOJA_LOOKUP_KEY:-local-development-only-lookup-key}
+      PAMOJA_MASTER_KEY: ${PAMOJA_MASTER_KEY:-local-development-only-master-key}
     command: ["sh", "-ec", "go mod download && exec go run ./cmd/api"]
     ports:
       - "8080:3000"
@@ -82,7 +99,10 @@ services:
     environment:
       APP_ENV: development
       LOG_LEVEL: debug
-      DATABASE_URL: postgres://pamoja:pamoja_dev_password@db:5432/pamoja?sslmode=disable
+      DATABASE_URL: postgres://pamoja_app:pamoja_app_dev_password@db:5432/pamoja?sslmode=disable
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-local-development-only-token-key}
+      PAMOJA_LOOKUP_KEY: ${PAMOJA_LOOKUP_KEY:-local-development-only-lookup-key}
+      PAMOJA_MASTER_KEY: ${PAMOJA_MASTER_KEY:-local-development-only-master-key}
     command: ["sh", "-ec", "go mod download && exec go run ./cmd/worker"]
     restart: on-failure
 

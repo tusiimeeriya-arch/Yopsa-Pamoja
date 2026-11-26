@@ -40,10 +40,12 @@ func TestEveryRouteDeclaresAuthorization(t *testing.T) {
 
 func TestPublicRoutesAreOnlyPlatformEndpoints(t *testing.T) {
 	allowed := map[string]bool{
-		"GET /":            true,
-		"GET /healthz":     true,
-		"GET /readyz":      true,
-		"GET /api/v1/meta": true,
+		"GET /":                     true,
+		"GET /healthz":              true,
+		"GET /readyz":               true,
+		"GET /api/v1/meta":          true,
+		"POST /api/v1/auth/login":   true,
+		"POST /api/v1/auth/refresh": true,
 	}
 	for _, route := range Routes(Deps{}) {
 		key := route.Method + " " + route.Pattern

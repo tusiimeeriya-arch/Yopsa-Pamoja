@@ -60,6 +60,7 @@ const (
 
 // Modules.
 const (
+	ModuleAuth           Module = "auth"
 	ModuleRegistration   Module = "registration"
 	ModuleMeetings       Module = "meetings"
 	ModulePayments       Module = "payments"
@@ -105,6 +106,8 @@ const (
 	ActionReviewOperations Action = "review_operations"
 	ActionAcceptOffer      Action = "accept_offer"
 	ActionClose            Action = "close"
+	ActionRevoke           Action = "revoke"
+	ActionStepUp           Action = "step_up"
 )
 
 // Context fields for separation-of-duties checks.

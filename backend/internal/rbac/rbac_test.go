@@ -44,6 +44,11 @@ func TestNoFinancialRightsForNonFinancialRoles(t *testing.T) {
 func TestAuditorIsReadOnly(t *testing.T) {
 	m := mustLoad(t)
 	for _, g := range m.GrantsFor(RoleAuditor) {
+		// Every role manages its own sessions and step-up; that is self-service
+		// authentication, not a business action on a record.
+		if g.Module == ModuleAuth {
+			continue
+		}
 		for _, a := range g.Actions {
 			if a != ActionView && a != ActionExport {
 				t.Errorf("auditor granted non-read action %s on %s", a, g.Module)

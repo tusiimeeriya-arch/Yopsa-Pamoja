@@ -9,10 +9,10 @@ info:
     while the core ledger owns contractual schedules, posted balances and
     accounting.
 
-    P0 exposes only unauthenticated platform endpoints. Authentication
-    (Argon2id + TOTP, short-lived access tokens, rotating refresh tokens) and
-    the domain modules arrive in P1-P6; every state-changing endpoint will
-    require an `Idempotency-Key` header.
+    P1 exposes the platform probes plus the authentication surface: Argon2id
+    sign-in with TOTP, short-lived access tokens, rotating refresh tokens,
+    session management and step-up. The domain modules arrive in P2-P6; every
+    state-changing domain endpoint will require an `Idempotency-Key` header.
   license:
     name: Proprietary — Yopsa Microfinance
     identifier: LicenseRef-Yopsa-Proprietary
@@ -22,6 +22,8 @@ servers:
 tags:
   - name: platform
     description: Liveness, readiness and build metadata
+  - name: auth
+    description: Sign-in, sessions, refresh rotation and step-up
 paths:
   /healthz:
     get:
@@ -93,8 +95,259 @@ paths:
                   time:
                     type: string
                     format: date-time
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Sign in with password and, for staff, a TOTP code
+      description: |
+        Returns a short-lived access token (at most 15 minutes) and an opaque
+        refresh token. Every credential failure returns the same
+        `401 invalid_credentials` so accounts cannot be enumerated. Rate limited
+        per IP address and per account.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, password]
+              additionalProperties: false
+              properties:
+                phone:
+                  type: string
+                  example: "+256700000000"
+                password:
+                  type: string
+                  format: password
+                totp_code:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+                device_id:
+                  type: string
+                  maxLength: 128
+                shared_phone:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Signed in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tokens"
+        "401":
+          description: Invalid credentials, MFA required, or account locked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Too many attempts.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshTokens
+      tags: [auth]
+      summary: Rotate the refresh token
+      description: |
+        Rotates the refresh token and returns a new pair. Reusing a token that
+        was already rotated revokes the whole session family.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              additionalProperties: false
+              properties:
+                refresh_token:
+                  type: string
+                device_id:
+                  type: string
+      responses:
+        "200":
+          description: New token pair.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tokens"
+        "401":
+          description: Invalid, expired or revoked refresh token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Revoke the caller's session family
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/auth/sessions:
+    get:
+      operationId: listSessions
+      tags: [auth]
+      summary: List the caller's sessions
+      responses:
+        "200":
+          description: The caller's recent sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Session"
+        "401":
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/auth/sessions/{sessionID}/revoke:
+    post:
+      operationId: revokeSession
+      tags: [auth]
+      summary: Revoke one of the caller's session families
+      parameters:
+        - name: sessionID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Revoked.
+        "404":
+          description: No such session for this caller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/auth/step-up:
+    post:
+      operationId: stepUp
+      tags: [auth]
+      summary: Re-authenticate before a sensitive action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              additionalProperties: false
+              properties:
+                password:
+                  type: string
+                  format: password
+                totp_code:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+      responses:
+        "200":
+          description: Step-up recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [step_up_at]
+                properties:
+                  step_up_at:
+                    type: string
+                    format: date-time
+        "401":
+          description: Invalid credentials or MFA required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   schemas:
+    Tokens:
+      type: object
+      required: [access_token, token_type, expires_in, refresh_token, session_id, user]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          const: Bearer
+        expires_in:
+          type: integer
+          example: 900
+        refresh_token:
+          type: string
+        session_id:
+          type: string
+          format: uuid
+        user:
+          type: object
+          required: [id, is_staff, mfa_required]
+          properties:
+            id:
+              type: string
+              format: uuid
+            is_staff:
+              type: boolean
+            mfa_required:
+              type: boolean
+    Session:
+      type: object
+      required: [id, device_id, user_agent, created_at, last_seen_at, expires_at, current]
+      properties:
+        id:
+          type: string
+          format: uuid
+        device_id:
+          type: string
+        user_agent:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+        current:
+          type: boolean
+    Error:
+      type: object
+      required: [error, request_id]
+      properties:
+        error:
+          type: string
+        request_id:
+          type: string
     Readiness:
       type: object
       required: [status, checks]

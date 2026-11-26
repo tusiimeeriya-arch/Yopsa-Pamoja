@@ -37,6 +37,8 @@ actions:
   - review_operations
   - accept_offer
   - close
+  - revoke
+  - step_up
 
 roles:
   member:
@@ -71,6 +73,7 @@ roles:
     may_handle_finance: false
 
 modules:
+  auth: { description: The caller's own sessions and step-up re-authentication }
   registration: { description: Legal entity, branch, group, membership, authority and consent records }
   meetings: { description: Meetings, registers, attendance, minutes, resolutions, action items }
   payments: { description: Payment entries, group submissions, receipts, corrections }
@@ -90,6 +93,18 @@ modules:
   integrations: { description: Ledger, SMS and inbound integration administration }
 
 grants:
+  # ---- every role manages its own sessions and step-up --------------------
+  - { role: member, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: secretary, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: treasurer, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: chairperson, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: field_officer, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: verifier, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: credit_approver, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: management, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: auditor, module: auth, actions: [view, revoke, step_up], scope: self }
+  - { role: it_admin, module: auth, actions: [view, revoke, step_up], scope: self }
+
   # ---- member: own records only -------------------------------------------
   - { role: member, module: registration, actions: [view], scope: self }
   - { role: member, module: meetings, actions: [view], scope: self }

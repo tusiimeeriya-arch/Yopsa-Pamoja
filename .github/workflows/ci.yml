@@ -19,6 +19,22 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    services:
+      postgres:
+        # The integration tests create the P1 roles and exercise RLS, so the
+        # service user must be allowed to create roles (it is the superuser).
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pamoja
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pamoja_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pamoja -d pamoja_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -43,6 +59,10 @@ jobs:
           version: v2.15.0
           working-directory: backend
       - name: tests with coverage
+        env:
+          # Password comes from PGPASSWORD so no credential sits in the URL.
+          PGPASSWORD: postgres
+          TEST_DATABASE_URL: postgres://pamoja@localhost:5432/pamoja_test?sslmode=disable
         run: go test -race -coverprofile=/tmp/coverage.out -covermode=atomic ./...
       - name: coverage gate
         working-directory: .
