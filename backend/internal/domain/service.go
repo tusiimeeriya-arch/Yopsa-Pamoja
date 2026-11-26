@@ -734,6 +734,9 @@ func (s *Service) CreateLoan(ctx context.Context, p auth.Principal, requestID st
 	if strings.TrimSpace(in.Purpose) == "" {
 		return Loan{}, fmt.Errorf("%w: purpose is required", ErrInvalid)
 	}
+	if strings.TrimSpace(in.GroupID) == "" {
+		return Loan{}, fmt.Errorf("%w: group is required", ErrInvalid)
+	}
 	if in.TermMonths == 0 {
 		in.TermMonths = 6
 	}
@@ -1673,6 +1676,10 @@ func groupIDs(groups []Group) []string {
 }
 
 func groupScope(ctx context.Context, tx pgx.Tx, groupID string) (legalEntityID, branchID string, err error) {
+	groupID = strings.TrimSpace(groupID)
+	if groupID == "" {
+		return "", "", ErrNotFound
+	}
 	err = tx.QueryRow(ctx, `
 		SELECT b.legal_entity_id::text, g.branch_id::text
 		FROM pamoja.grp g JOIN pamoja.branch b ON b.id = g.branch_id
