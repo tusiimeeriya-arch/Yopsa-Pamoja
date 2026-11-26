@@ -18,10 +18,12 @@ import (
 	"github.com/yopsa/pamoja/backend/internal/auth"
 	"github.com/yopsa/pamoja/backend/internal/httpapi"
 	"github.com/yopsa/pamoja/backend/internal/ledger"
+	"github.com/yopsa/pamoja/backend/internal/loans"
 	"github.com/yopsa/pamoja/backend/internal/payments"
 	"github.com/yopsa/pamoja/backend/internal/platform/config"
 	"github.com/yopsa/pamoja/backend/internal/platform/keyring"
 	"github.com/yopsa/pamoja/backend/internal/platform/logging"
+	"github.com/yopsa/pamoja/backend/internal/reporting"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=<semver>".
@@ -75,6 +77,8 @@ func run() error {
 		Handler: httpapi.New(httpapi.Deps{
 			Pool: pool, Logger: log, Config: cfg, Version: version, Auth: authService,
 			Payments: payments.New(ledger.NewSandbox()),
+			Loans:    loans.New(),
+			Reports:  reporting.New(),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       cfg.ReadTimeout,

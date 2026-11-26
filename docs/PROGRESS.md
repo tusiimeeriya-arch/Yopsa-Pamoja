@@ -4,7 +4,7 @@
 **Working branch:** `overnight-autonomous-mode` (the sandbox's prepared branch; the
 platform owns commits and branch switching, so the requested `build/overnight`
 name is recorded here rather than checked out — see BLOCKERS B-01).
-**Current phase / step:** P4 complete — starting P5.
+**Current phase / step:** P6 complete — starting P7.
 
 ## How to resume
 
@@ -31,9 +31,9 @@ P3 → P4 → P5 → P6 → P7 → P8 → P9 → P10. No reordering.
 | G0 | Baseline: P1 stack boots, existing tests, docs index | DONE |
 | P3 | Registration dependency, meetings, register, attendance formulas, minutes, action items, controlled amendments | DONE |
 | P4 | Payment entries, group submissions, receipts, allocations, postings, finance exceptions, corrections, sandbox ledger | DONE |
-| P5 | Loan products, applications, appraisal, mandatory operations review, approval, offers, disbursement | TODO |
-| P6 | Dashboard cards/drill-downs, reports, audited exports, ranking snapshots | TODO |
-| P7 | Learning, comments, disputes, tasks, notifications | TODO |
+| P5 | Loan products, applications, appraisal, mandatory operations review, approval, offers, disbursement | DONE |
+| P6 | Dashboard cards/drill-downs, reports, audited exports, ranking snapshots | DONE |
+| P7 | Learning, comments, disputes, tasks, notifications | IN PROGRESS |
 | P8 | Offline outbox, idempotent sync, conflicts, server time | TODO |
 | P9 | Audit verification, metrics, rate limits, backup/restore drill, k6 | TODO |
 | P10 | E2E acceptance journeys, seed, runbooks, user guides, handover, morning report | TODO |
@@ -86,11 +86,72 @@ P3 → P4 → P5 → P6 → P7 → P8 → P9 → P10. No reordering.
     integration against `pamoja_test`).
   - `go vet ./...` → PASS; `gofmt -l .` → empty.
 
+## P5 — DONE
+
+- Migration `000005_p5_loans.up.sql`: approved product versions (six seeded
+  products), applications, appraisals, borrower checks, checked guarantees,
+  decisions, offers, disbursements, installments, repayments and material
+  changes; forced RLS; transition guard, disbursement guard (SD-04, accepted
+  offer, cap), repayment guards.
+- `internal/loans/rules.go`: pure product limits, guarantor threshold,
+  approval authority, SD-03/SD-04 checks, product-version offer terms and
+  group/internal-member totals kept apart.
+- `internal/loans/service.go`: create (with the group's current chairperson
+  authority record) → appraise → operations review → decision (one or two
+  credit approvers per A-012) → offer → acceptance → disbursement (builds the
+  installment schedule) → repayment; material change returns the application
+  to operations review and clears the approver.
+- HTTP surface: application create/list/get, appraise, review, decision, offer,
+  offer acceptance, disburse, material change, repayment.
+- Evidence:
+  - `go test ./internal/loans/ ./internal/httpapi/ ./internal/rbac/` → PASS.
+  - `TEST_DATABASE_URL=… go test -p 1 ./internal/loans/` → PASS
+    (full journey with a 12-installment schedule and an applied repayment;
+    T-LOAN-03 self-approval, T-LOAN-04 approver disbursing, A-010 missing
+    guarantee, A-034 material change, product minimum, missing authority).
+  - `TEST_DATABASE_URL=… go test -p 1 ./...` → PASS (every package).
+  - `go vet ./...` → PASS; `gofmt -l .` → empty.
+
+### Environment repairs made this phase
+
+- The preview database had only migrations 1–2 applied because the `migrate`
+  service runs once per stack start. Re-running it applies the (idempotent)
+  files: `docker compose … up -d migrate`. Do this after adding a migration.
+- Integration tests no longer rewrite the shared `pamoja_app` password unless
+  the expected one fails to authenticate; a needless `ALTER ROLE` raced the
+  live API and produced a transient `password authentication failed` in the
+  logs.
+
+## P6 — DONE
+
+- Migration `000006_p6_reports.up.sql`: `ranking_snapshot` and `report_export`,
+  forced RLS, append-only guard trigger (a recorded snapshot or export cannot be
+  updated or deleted), grants for the app and read-only roles.
+- `internal/reporting`:
+  - `Dashboard` — seven cards (members, attendance over 90 days, posted
+    savings, loans outstanding, arrears, submissions awaiting verification,
+    open finance exceptions), each naming its drill-down.
+  - `DrillDown` — the rows behind one card, always group-scoped.
+  - `Generate`/`GetExport` — CSV from members, attendance, payments, loans or
+    arrears; the exact bytes are stored with their SHA-256, so a download can be
+    re-verified.
+  - `ComputeScore`/`Policy` — pure weighted ranking (weights normalised,
+    arrears inverted, metrics clamped) plus `Snapshot`/`LatestSnapshot`, one
+    immutable snapshot per group and period with its branch rank.
+- HTTP surface: dashboard, dashboard card, export create/download, ranking read,
+  ranking snapshot create.
+- Evidence:
+  - `go test ./internal/reporting/` → PASS (T-RANK-01…04, policy fallback).
+  - `TEST_DATABASE_URL=… go test -p 1 ./internal/reporting/` → PASS
+    (T-DASH-01/02, T-EXP-01 including the hash match and the immutability
+    trigger, T-RANK-05 idempotent snapshot and `ErrNoSnapshot`).
+  - `TEST_DATABASE_URL=… go test -p 1 ./...` → PASS (every package).
+  - `go vet ./...` → PASS; `gofmt -l .` → empty.
+
 ## Next
 
-P5 migration `000005_p5_loans.up.sql`, then `internal/loans` (mandatory
-operations review, approval ≠ disbursement, guarantor threshold, material
-change, product-version terms).
+P7 — learning items and progress, comments with moderation, attendance/payment
+disputes, follow-up tasks and notifications.
 
 ## Open blockers
 

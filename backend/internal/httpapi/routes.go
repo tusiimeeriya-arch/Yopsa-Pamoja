@@ -6,9 +6,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/yopsa/pamoja/backend/internal/loans"
 	"github.com/yopsa/pamoja/backend/internal/payments"
 	"github.com/yopsa/pamoja/backend/internal/platform/config"
 	"github.com/yopsa/pamoja/backend/internal/rbac"
+	"github.com/yopsa/pamoja/backend/internal/reporting"
 )
 
 // Deps are the collaborators a handler may use. Every field is optional so the
@@ -20,6 +22,8 @@ type Deps struct {
 	Version  string
 	Auth     AuthService
 	Payments *payments.Service
+	Loans    *loans.Service
+	Reports  *reporting.Service
 }
 
 // Route is one entry of the HTTP surface. Routes are declared as data so that
@@ -77,5 +81,27 @@ func Routes(d Deps) []Route {
 		{Method: http.MethodPost, Pattern: "/api/v1/corrections/{correctionID}/apply", Module: rbac.ModulePayments, Action: rbac.ActionCorrect, Handler: d.requireAuth(d.handleApplyCorrection)},
 		{Method: http.MethodGet, Pattern: "/api/v1/finance-exceptions", Module: rbac.ModuleReconciliation, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListExceptions)},
 		{Method: http.MethodPost, Pattern: "/api/v1/finance-exceptions/{exceptionID}/resolve", Module: rbac.ModuleReconciliation, Action: rbac.ActionPost, Handler: d.requireAuth(d.handleResolveException)},
+
+		// P5 — borrowing: application, appraisal, operations review, approval,
+		// offer, acceptance, disbursement and repayment.
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/loan-applications", Module: rbac.ModuleLoans, Action: rbac.ActionCreate, Handler: d.requireAuth(d.handleCreateLoanApplication)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/loan-applications", Module: rbac.ModuleLoans, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListLoanApplications)},
+		{Method: http.MethodGet, Pattern: "/api/v1/loan-applications/{applicationID}", Module: rbac.ModuleLoans, Action: rbac.ActionView, Handler: d.requireAuth(d.handleGetLoanApplication)},
+		{Method: http.MethodPost, Pattern: "/api/v1/loan-applications/{applicationID}/appraise", Module: rbac.ModuleLoans, Action: rbac.ActionAppraise, Handler: d.requireAuth(d.handleAppraiseLoan)},
+		{Method: http.MethodPost, Pattern: "/api/v1/loan-applications/{applicationID}/review", Module: rbac.ModuleLoans, Action: rbac.ActionSubmit, Handler: d.requireAuth(d.handleSendLoanToReview)},
+		{Method: http.MethodPost, Pattern: "/api/v1/loan-applications/{applicationID}/decision", Module: rbac.ModuleLoans, Action: rbac.ActionApprove, Handler: d.requireAuth(d.handleDecideLoan)},
+		{Method: http.MethodPost, Pattern: "/api/v1/loan-applications/{applicationID}/offer", Module: rbac.ModuleLoans, Action: rbac.ActionApprove, Handler: d.requireAuth(d.handleIssueLoanOffer)},
+		{Method: http.MethodPost, Pattern: "/api/v1/loan-applications/{applicationID}/offer/accept", Module: rbac.ModuleLoans, Action: rbac.ActionAcceptOffer, Handler: d.requireAuth(d.handleAcceptLoanOffer)},
+		{Method: http.MethodPost, Pattern: "/api/v1/loan-applications/{applicationID}/disburse", Module: rbac.ModuleLoans, Action: rbac.ActionDisburse, Handler: d.requireAuth(d.handleDisburseLoan)},
+		{Method: http.MethodPost, Pattern: "/api/v1/loan-applications/{applicationID}/material-change", Module: rbac.ModuleLoans, Action: rbac.ActionApprove, Handler: d.requireAuth(d.handleLoanMaterialChange)},
+		{Method: http.MethodPost, Pattern: "/api/v1/loan-applications/{applicationID}/repayments", Module: rbac.ModuleLoans, Action: rbac.ActionCreate, Handler: d.requireAuth(d.handleRecordLoanRepayment)},
+
+		// P6 — dashboard cards and drill-downs, audited exports, ranking.
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/dashboard", Module: rbac.ModuleDashboard, Action: rbac.ActionView, Handler: d.requireAuth(d.handleDashboard)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/dashboard/{card}", Module: rbac.ModuleDashboard, Action: rbac.ActionView, Handler: d.requireAuth(d.handleDashboardCard)},
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/reports/exports", Module: rbac.ModuleReports, Action: rbac.ActionExport, Handler: d.requireAuth(d.handleCreateExport)},
+		{Method: http.MethodGet, Pattern: "/api/v1/reports/exports/{exportID}", Module: rbac.ModuleReports, Action: rbac.ActionView, Handler: d.requireAuth(d.handleDownloadExport)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/ranking", Module: rbac.ModuleRanking, Action: rbac.ActionView, Handler: d.requireAuth(d.handleGroupRanking)},
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/ranking/snapshots", Module: rbac.ModuleRanking, Action: rbac.ActionConfigure, Handler: d.requireAuth(d.handleCreateRankingSnapshot)},
 	}
 }

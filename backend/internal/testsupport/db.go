@@ -83,7 +83,10 @@ func setup(dsn string) error {
 			return fmt.Errorf("apply %s: %w", filepath.Base(path), execErr)
 		}
 	}
-	if _, err := conn.Exec(ctx, "ALTER ROLE pamoja_app PASSWORD '"+AppRolePassword+"'"); err != nil {
+	// The preview API shares this cluster, so only rewrite the cluster-wide role
+	// password when the expected one does not work. A needless ALTER races a
+	// live connection and shows up as a transient authentication failure.
+	if err := ensureAppPassword(ctx, conn, dsn); err != nil {
 		return err
 	}
 
@@ -100,6 +103,21 @@ func setup(dsn string) error {
 		return err
 	}
 	return nil
+}
+
+// ensureAppPassword makes sure pamoja_app can log in with AppRolePassword and
+// leaves the role untouched when it already can.
+func ensureAppPassword(ctx context.Context, owner *pgx.Conn, dsn string) error {
+	appDSN, err := appRoleDSN(dsn)
+	if err != nil {
+		return err
+	}
+	probe, err := pgx.Connect(ctx, appDSN)
+	if err == nil {
+		return probe.Close(ctx)
+	}
+	_, err = owner.Exec(ctx, "ALTER ROLE pamoja_app PASSWORD '"+AppRolePassword+"'")
+	return err
 }
 
 func appRoleDSN(dsn string) (string, error) {

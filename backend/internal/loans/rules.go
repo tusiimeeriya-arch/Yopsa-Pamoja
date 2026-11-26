@@ -11,11 +11,11 @@ import (
 
 // Errors returned by the rule functions.
 var (
-	ErrOutsideProduct     = errors.New("loans: amount or term is outside the approved product version")
-	ErrGuarantorRequired  = errors.New("loans: a loan above the threshold needs a checked guarantee")
-	ErrApproverNotAllowed = errors.New("loans: the approver may not be the applicant or appraiser (SD-03)")
+	ErrOutsideProduct      = errors.New("loans: amount or term is outside the approved product version")
+	ErrGuarantorRequired   = errors.New("loans: a loan above the threshold needs a checked guarantee")
+	ErrApproverNotAllowed  = errors.New("loans: the approver may not be the applicant or appraiser (SD-03)")
 	ErrDisburserNotAllowed = errors.New("loans: the disburser must differ from the approver (SD-04)")
-	ErrMaterialChange     = errors.New("loans: material change requires re-approval")
+	ErrMaterialChange      = errors.New("loans: material change requires re-approval")
 	ErrOfferNotFromProduct = errors.New("loans: offer terms must come from the approved product version")
 )
 
@@ -32,12 +32,12 @@ type Product struct {
 
 // Application is the part of an application the rules need.
 type Application struct {
-	Kind          string
-	AmountUGX     int64
-	TermMonths    int
-	ApplicantID   string
-	AppraiserID   string
-	ApproverID    string
+	Kind           string
+	AmountUGX      int64
+	TermMonths     int
+	ApplicantID    string
+	AppraiserID    string
+	ApproverID     string
 	ProductVersion int
 }
 
@@ -101,11 +101,11 @@ func CheckDisburser(actorID string, a Application) error {
 
 // MaterialFields are the fields whose change forces re-approval (A-034).
 var MaterialFields = map[string]bool{
-	"amount_ugx":     true,
-	"term_months":    true,
-	"security":       true,
-	"guarantors":     true,
-	"purpose":        true,
+	"amount_ugx":  true,
+	"term_months": true,
+	"security":    true,
+	"guarantors":  true,
+	"purpose":     true,
 }
 
 // IsMaterial reports whether a field change forces re-approval.
@@ -113,8 +113,8 @@ func IsMaterial(field string) bool { return MaterialFields[field] }
 
 // Offer is the terms issued from an approved product version.
 type Offer struct {
-	AmountUGX  int64
-	TermMonths int
+	AmountUGX   int64
+	TermMonths  int
 	ScheduleRef string
 }
 
