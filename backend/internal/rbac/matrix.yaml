@@ -16,6 +16,7 @@ actions:
   - view
   - create
   - edit_draft
+  - check_in
   - submit
   - lock
   - verify
@@ -107,7 +108,7 @@ grants:
 
   # ---- member: own records only -------------------------------------------
   - { role: member, module: registration, actions: [view], scope: self }
-  - { role: member, module: meetings, actions: [view], scope: self }
+  - { role: member, module: meetings, actions: [view, check_in], scope: self }
   - { role: member, module: payments, actions: [view], scope: self }
   - { role: member, module: learning, actions: [view], scope: self }
   - { role: member, module: comments, actions: [view, create], scope: self }
@@ -117,7 +118,7 @@ grants:
 
   # ---- secretary: the meeting record for assigned groups ------------------
   - { role: secretary, module: registration, actions: [view], scope: group }
-  - { role: secretary, module: meetings, actions: [view, create, edit_draft, amend, close], scope: group }
+  - { role: secretary, module: meetings, actions: [view, create, edit_draft, check_in, amend, close], scope: group }
   - { role: secretary, module: payments, actions: [view], scope: group }
   - { role: secretary, module: learning, actions: [view], scope: group }
   - { role: secretary, module: comments, actions: [view, moderate], scope: group }
@@ -148,7 +149,7 @@ grants:
 
   # ---- field officer: registration and appraisal --------------------------
   - { role: field_officer, module: registration, actions: [view, create, edit_draft, submit], scope: branch }
-  - { role: field_officer, module: meetings, actions: [view], scope: branch }
+  - { role: field_officer, module: meetings, actions: [view, check_in], scope: branch }
   - { role: field_officer, module: payments, actions: [view], scope: branch }
   - { role: field_officer, module: loans, actions: [view, create, edit_draft, submit, appraise], scope: branch }
   - { role: field_officer, module: dashboard, actions: [view], scope: branch }

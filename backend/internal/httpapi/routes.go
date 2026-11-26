@@ -50,5 +50,14 @@ func Routes(d Deps) []Route {
 		{Method: http.MethodGet, Pattern: "/api/v1/auth/sessions", Module: rbac.ModuleAuth, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListSessions)},
 		{Method: http.MethodPost, Pattern: "/api/v1/auth/sessions/{sessionID}/revoke", Module: rbac.ModuleAuth, Action: rbac.ActionRevoke, Handler: d.requireAuth(d.handleRevokeSession)},
 		{Method: http.MethodPost, Pattern: "/api/v1/auth/step-up", Module: rbac.ModuleAuth, Action: rbac.ActionStepUp, Handler: d.requireAuth(d.handleStepUp)},
+
+		// P3 — meetings, register, minutes and controlled amendments.
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/meetings", Module: rbac.ModuleMeetings, Action: rbac.ActionCreate, Handler: d.requireAuth(d.handleCreateMeeting)},
+		{Method: http.MethodPost, Pattern: "/api/v1/meetings/{meetingID}/open", Module: rbac.ModuleMeetings, Action: rbac.ActionEditDraft, Handler: d.requireAuth(d.handleOpenMeeting)},
+		{Method: http.MethodPost, Pattern: "/api/v1/meetings/{meetingID}/check-in", Module: rbac.ModuleMeetings, Action: rbac.ActionCheckIn, Handler: d.requireAuth(d.handleCheckIn)},
+		{Method: http.MethodPost, Pattern: "/api/v1/meetings/{meetingID}/confirm", Module: rbac.ModuleMeetings, Action: rbac.ActionEditDraft, Handler: d.requireAuth(d.handleConfirmRegister)},
+		{Method: http.MethodPost, Pattern: "/api/v1/meetings/{meetingID}/close", Module: rbac.ModuleMeetings, Action: rbac.ActionClose, Handler: d.requireAuth(d.handleCloseMeetingWithRecord)},
+		{Method: http.MethodPost, Pattern: "/api/v1/meetings/{meetingID}/amend-attendance", Module: rbac.ModuleMeetings, Action: rbac.ActionAmend, Handler: d.requireAuth(d.handleAmendAttendance)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/attendance", Module: rbac.ModuleMeetings, Action: rbac.ActionView, Handler: d.requireAuth(d.handleAttendanceStats)},
 	}
 }
