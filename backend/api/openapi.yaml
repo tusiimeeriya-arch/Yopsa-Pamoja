@@ -1,0 +1,118 @@
+openapi: 3.1.0
+info:
+  title: Yopsa Pamoja API
+  version: 0.1.0
+  summary: Group management and financial monitoring for Yopsa Microfinance.
+  description: |
+    Internal API for Yopsa Pamoja. It complements Yopsa's approved financial
+    ledger and never replaces it: Pamoja owns meeting and operational records,
+    while the core ledger owns contractual schedules, posted balances and
+    accounting.
+
+    P0 exposes only unauthenticated platform endpoints. Authentication
+    (Argon2id + TOTP, short-lived access tokens, rotating refresh tokens) and
+    the domain modules arrive in P1-P6; every state-changing endpoint will
+    require an `Idempotency-Key` header.
+  license:
+    name: Proprietary — Yopsa Microfinance
+    identifier: LicenseRef-Yopsa-Proprietary
+servers:
+  - url: http://localhost:3000
+    description: Local development
+tags:
+  - name: platform
+    description: Liveness, readiness and build metadata
+paths:
+  /healthz:
+    get:
+      operationId: getLiveness
+      tags: [platform]
+      summary: Liveness probe
+      description: Returns 200 while the process is running. Does not touch the database.
+      security: []
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+  /readyz:
+    get:
+      operationId: getReadiness
+      tags: [platform]
+      summary: Readiness probe
+      description: |
+        Returns 200 when the process can serve traffic: the database answers and
+        a migration version is recorded. Returns 503 with per-component detail
+        otherwise.
+      security: []
+      responses:
+        "200":
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: Not ready; see `checks`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+  /api/v1/meta:
+    get:
+      operationId: getMeta
+      tags: [platform]
+      summary: Build and environment metadata
+      security: []
+      responses:
+        "200":
+          description: Service metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [service, version, environment, phase, time]
+                properties:
+                  service:
+                    type: string
+                    const: pamoja-api
+                  version:
+                    type: string
+                  environment:
+                    type: string
+                    enum: [development, staging, production]
+                  phase:
+                    type: string
+                  time:
+                    type: string
+                    format: date-time
+components:
+  schemas:
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            database: ok
+            schema: ok
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+security:
+  - bearerAuth: []
