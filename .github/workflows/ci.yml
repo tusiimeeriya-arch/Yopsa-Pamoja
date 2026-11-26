@@ -36,9 +36,11 @@ jobs:
       - name: go vet
         run: go vet ./...
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          # Pinned: the module targets Go 1.26, so the linter must be built with
+          # a Go toolchain at least that new, and it must read the v2 config.
+          version: v2.15.0
           working-directory: backend
       - name: tests with coverage
         run: go test -race -coverprofile=/tmp/coverage.out -covermode=atomic ./...
@@ -76,7 +78,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
       - name: trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .

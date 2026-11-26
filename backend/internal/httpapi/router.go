@@ -21,7 +21,11 @@ func New(d Deps) http.Handler {
 
 	r := chi.NewRouter()
 	r.Use(requestID)
-	r.Use(middleware.RealIP)
+	// Client IP is deliberately not derived from forwarding headers here: chi's
+	// RealIP trusted client-supplied X-Forwarded-For / True-Client-IP values.
+	// When audit logging needs the caller's IP, add middleware.ClientIPFromXFF
+	// with the deployment's trusted proxy CIDRs (or ClientIPFromXFFTrustedProxies
+	// with its proxy count) and read it with middleware.GetClientIP.
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(securityHeaders(d.Config.AppEnv == config.EnvProduction))
