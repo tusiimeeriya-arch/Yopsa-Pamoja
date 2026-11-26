@@ -85,7 +85,7 @@ func SkewMS(clientTime, serverTime time.Time) int64 {
 }
 
 // BatchStatus is completed only when every operation applied.
-func BatchStatus(applied, conflicts int) string {
+func BatchStatus(_, conflicts int) string {
 	if conflicts > 0 {
 		return "completed_with_conflicts"
 	}
@@ -206,19 +206,36 @@ func (s *Service) applyOne(ctx context.Context, tx pgx.Tx, in SubmitInput, batch
 	}
 
 	outcome := OperationResult{Seq: op.Seq, Kind: op.Kind}
+	// One operation that the server refuses must not poison the whole batch:
+	// a savepoint contains any failed statement so the next operation still
+	// runs and the refusal is recorded as that operation's outcome.
+	if _, err := tx.Exec(ctx, "SAVEPOINT offline_operation"); err != nil {
+		return OperationResult{}, err
+	}
 	var payload []byte
+	var applyErr error
 	switch op.Kind {
 	case KindPaymentEntry:
-		payload, outcome = s.applyPayment(ctx, tx, in, op)
+		payload, outcome, applyErr = s.applyPayment(ctx, tx, in, op)
 	case KindAttendanceCheckIn:
-		payload, outcome = s.applyCheckIn(ctx, tx, in, op)
+		payload, outcome, applyErr = s.applyCheckIn(ctx, tx, in, op)
+	}
+	if applyErr != nil {
+		if _, rbErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT offline_operation"); rbErr != nil {
+			return OperationResult{}, rbErr
+		}
+		payload = nil
+		outcome = OperationResult{Seq: op.Seq, Kind: op.Kind, Status: "rejected",
+			ConflictReason: fmt.Sprintf("refused: %v", applyErr)}
+	} else if _, err := tx.Exec(ctx, "RELEASE SAVEPOINT offline_operation"); err != nil {
+		return OperationResult{}, err
 	}
 
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO pamoja.sync_operation
 		   (batch_id, seq, kind, idempotency_key, client_created_at, payload,
 		    status, conflict_reason, result, applied_at)
-		 VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb,
+		 VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb, $7, $8, NULLIF($9, '')::jsonb,
 		         CASE WHEN $7 = 'applied' THEN now() ELSE NULL END)`,
 		batchID, op.Seq, op.Kind, op.IdempotencyKey, op.ClientCreatedAt, string(op.Payload),
 		outcome.Status, outcome.ConflictReason, string(payload)); err != nil {
@@ -241,19 +258,19 @@ type paymentPayload struct {
 	EvidenceID string `json:"evidence_id"`
 }
 
-func (s *Service) applyPayment(ctx context.Context, tx pgx.Tx, in SubmitInput, op OperationInput) ([]byte, OperationResult) {
+func (s *Service) applyPayment(ctx context.Context, tx pgx.Tx, in SubmitInput, op OperationInput) ([]byte, OperationResult, error) {
 	outcome := OperationResult{Seq: op.Seq, Kind: op.Kind}
 	var p paymentPayload
 	if err := json.Unmarshal(op.Payload, &p); err != nil {
 		outcome.Status, outcome.ConflictReason = "rejected", "the payload is not valid JSON"
-		return nil, outcome
+		return nil, outcome, nil //nolint:nilerr // a malformed payload is this operation's outcome, not a batch failure
 	}
 	paidOn := in.ClientTime
 	if p.PaidOn != "" {
 		parsed, err := time.Parse("2006-01-02", p.PaidOn)
 		if err != nil {
 			outcome.Status, outcome.ConflictReason = "rejected", "paid_on must be YYYY-MM-DD"
-			return nil, outcome
+			return nil, outcome, nil //nolint:nilerr // a bad date is this operation's outcome, not a batch failure
 		}
 		paidOn = parsed
 	}
@@ -270,7 +287,7 @@ func (s *Service) applyPayment(ctx context.Context, tx pgx.Tx, in SubmitInput, o
 		"entry_id": entry.ID, "status": entry.Status, "amount_ugx": entry.AmountUGX,
 	})
 	outcome.Status = "applied"
-	return encoded, outcome
+	return encoded, outcome, nil
 }
 
 type checkInPayload struct {
@@ -280,12 +297,12 @@ type checkInPayload struct {
 	Channel   string `json:"channel"`
 }
 
-func (s *Service) applyCheckIn(ctx context.Context, tx pgx.Tx, in SubmitInput, op OperationInput) ([]byte, OperationResult) {
+func (s *Service) applyCheckIn(ctx context.Context, tx pgx.Tx, in SubmitInput, op OperationInput) ([]byte, OperationResult, error) {
 	outcome := OperationResult{Seq: op.Seq, Kind: op.Kind}
 	var p checkInPayload
 	if err := json.Unmarshal(op.Payload, &p); err != nil {
 		outcome.Status, outcome.ConflictReason = "rejected", "the payload is not valid JSON"
-		return nil, outcome
+		return nil, outcome, nil //nolint:nilerr // a malformed payload is this operation's outcome, not a batch failure
 	}
 	if p.Status == "" {
 		p.Status = "present"
@@ -295,7 +312,7 @@ func (s *Service) applyCheckIn(ctx context.Context, tx pgx.Tx, in SubmitInput, o
 	}
 	if p.MeetingID == "" || p.MemberID == "" {
 		outcome.Status, outcome.ConflictReason = "rejected", "meeting_id and member_id are required"
-		return nil, outcome
+		return nil, outcome, nil
 	}
 
 	var meetingStatus string
@@ -304,7 +321,7 @@ func (s *Service) applyCheckIn(ctx context.Context, tx pgx.Tx, in SubmitInput, o
 		p.MeetingID, in.GroupID).Scan(&meetingStatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		outcome.Status, outcome.ConflictReason = "rejected", "the meeting is not in this group"
-		return nil, outcome
+		return nil, outcome, nil
 	}
 	if err != nil {
 		return classify(outcome, err)
@@ -312,7 +329,7 @@ func (s *Service) applyCheckIn(ctx context.Context, tx pgx.Tx, in SubmitInput, o
 	if meetingStatus != "open" {
 		// The register moved on while the device was offline; the server wins.
 		outcome.Status, outcome.ConflictReason = "conflict", "the register is not open"
-		return nil, outcome
+		return nil, outcome, nil
 	}
 
 	var memberOK int
@@ -324,7 +341,7 @@ func (s *Service) applyCheckIn(ctx context.Context, tx pgx.Tx, in SubmitInput, o
 	}
 	if memberOK == 0 {
 		outcome.Status, outcome.ConflictReason = "rejected", "the member is not active in this group"
-		return nil, outcome
+		return nil, outcome, nil
 	}
 
 	tag, err := tx.Exec(ctx,
@@ -340,18 +357,19 @@ func (s *Service) applyCheckIn(ctx context.Context, tx pgx.Tx, in SubmitInput, o
 	}
 	if tag.RowsAffected() == 0 {
 		outcome.Status, outcome.ConflictReason = "conflict", "the member is already checked in"
-		return nil, outcome
+		return nil, outcome, nil
 	}
 	encoded, _ := json.Marshal(map[string]any{
 		"meeting_id": p.MeetingID, "member_id": p.MemberID, "status": p.Status,
 	})
 	outcome.Status = "applied"
-	return encoded, outcome
+	return encoded, outcome, nil
 }
 
 // classify turns a service refusal into an operation outcome instead of
-// failing the whole batch.
-func classify(outcome OperationResult, err error) ([]byte, OperationResult) {
+// failing the whole batch. Anything that is not a domain refusal is returned
+// to the caller, which records it against this operation alone.
+func classify(outcome OperationResult, err error) ([]byte, OperationResult, error) {
 	switch {
 	case errors.Is(err, domain.ErrConflict):
 		outcome.Status, outcome.ConflictReason = "conflict", "the record already exists"
@@ -360,7 +378,7 @@ func classify(outcome OperationResult, err error) ([]byte, OperationResult) {
 	case domain.IsValidation(err):
 		outcome.Status, outcome.ConflictReason = "rejected", err.Error()
 	default:
-		outcome.Status, outcome.ConflictReason = "rejected", fmt.Sprintf("refused: %v", err)
+		return nil, OperationResult{}, err
 	}
-	return nil, outcome
+	return nil, outcome, nil
 }

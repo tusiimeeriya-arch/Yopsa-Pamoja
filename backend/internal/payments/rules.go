@@ -155,7 +155,7 @@ func LockHash(entries []EntryRef) string {
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
 	h := sha256.New()
 	for _, e := range ordered {
-		fmt.Fprintf(h, "%s|%d|%s\n", e.ID, e.AmountUGX, e.MemberID)
+		_, _ = fmt.Fprintf(h, "%s|%d|%s\n", e.ID, e.AmountUGX, e.MemberID)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

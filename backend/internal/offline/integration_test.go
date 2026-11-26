@@ -78,10 +78,12 @@ func TestBatchAppliesAndReplaysSafely(t *testing.T) {
 	checkInPayload, _ := json.Marshal(map[string]any{
 		"meeting_id": f.meeting, "member_id": f.member, "status": "present", "channel": "assisted",
 	})
+	// Keys are unique per run: the server's idempotency keys are global, so a
+	// fixed key would replay the previous run's rows in a shared test database.
 	ops := []offline.OperationInput{
-		{Seq: 1, Kind: offline.KindPaymentEntry, IdempotencyKey: "batch1-op1",
+		{Seq: 1, Kind: offline.KindPaymentEntry, IdempotencyKey: "batch1-op1-" + uuid.NewString(),
 			ClientCreatedAt: time.Now().UTC(), Payload: paymentPayload},
-		{Seq: 2, Kind: offline.KindAttendanceCheckIn, IdempotencyKey: "batch1-op2",
+		{Seq: 2, Kind: offline.KindAttendanceCheckIn, IdempotencyKey: "batch1-op2-" + uuid.NewString(),
 			ClientCreatedAt: time.Now().UTC(), Payload: checkInPayload},
 	}
 
@@ -141,7 +143,7 @@ func TestClosedRegisterIsAConflict(t *testing.T) {
 		"meeting_id": f.meeting, "member_id": f.member, "status": "present", "channel": "assisted",
 	})
 	result := f.submit(t, []offline.OperationInput{{
-		Seq: 1, Kind: offline.KindAttendanceCheckIn, IdempotencyKey: "late-op",
+		Seq: 1, Kind: offline.KindAttendanceCheckIn, IdempotencyKey: "late-op-" + uuid.NewString(),
 		ClientCreatedAt: time.Now().UTC(), Payload: payload,
 	}})
 	if result.Conflicts != 1 || result.Applied != 0 || result.Status != "completed_with_conflicts" {

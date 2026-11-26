@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,7 +26,7 @@ import (
 // AppRolePassword matches the development stack so running integration tests
 // against the same PostgreSQL cluster never changes the password the live
 // preview API uses.
-const AppRolePassword = "pamoja_app_dev_password"
+const AppRolePassword = "pamoja_app_dev_password" // #nosec G101 -- local development role password, never used outside the dev stack.
 
 var (
 	once      sync.Once
@@ -69,13 +71,24 @@ func setup(dsn string) error {
 	}
 	defer func() { _, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock(918273645)`) }()
 
+	applied, err := appliedVersion(ctx, conn)
+	if err != nil {
+		return err
+	}
 	files, err := filepath.Glob(filepath.Join("..", "..", "db", "migrations", "*.up.sql"))
 	if err != nil {
 		return err
 	}
 	sort.Strings(files)
 	for _, path := range files {
-		script, readErr := os.ReadFile(path)
+		version, ok := migrationVersion(path)
+		if !ok {
+			return fmt.Errorf("migration %s: the name does not start with a version", filepath.Base(path))
+		}
+		if version <= applied {
+			continue
+		}
+		script, readErr := os.ReadFile(path) // #nosec G304 -- path comes from the repository's own migrations glob.
 		if readErr != nil {
 			return readErr
 		}
@@ -103,6 +116,41 @@ func setup(dsn string) error {
 		return err
 	}
 	return nil
+}
+
+// appliedVersion reports the highest migration version already recorded. Each
+// migration records its own version, so an up-to-date database is left alone:
+// re-running DDL takes ACCESS EXCLUSIVE locks on tables other test packages are
+// reading and writing, which deadlocks.
+func appliedVersion(ctx context.Context, conn *pgx.Conn) (int, error) {
+	var exists bool
+	if err := conn.QueryRow(ctx,
+		`SELECT to_regclass('public.schema_migrations') IS NOT NULL`).Scan(&exists); err != nil {
+		return 0, err
+	}
+	if !exists {
+		return 0, nil
+	}
+	var version int
+	if err := conn.QueryRow(ctx,
+		`SELECT COALESCE(max(version), 0) FROM public.schema_migrations`).Scan(&version); err != nil {
+		return 0, err
+	}
+	return version, nil
+}
+
+// migrationVersion reads the leading number of a migration file name.
+func migrationVersion(path string) (int, bool) {
+	base := filepath.Base(path)
+	end := strings.IndexByte(base, '_')
+	if end <= 0 {
+		return 0, false
+	}
+	version, err := strconv.Atoi(base[:end])
+	if err != nil {
+		return 0, false
+	}
+	return version, true
 }
 
 // ensureAppPassword makes sure pamoja_app can log in with AppRolePassword and

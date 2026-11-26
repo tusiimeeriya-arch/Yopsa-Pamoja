@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/yopsa/pamoja/backend/internal/auth"
 	"github.com/yopsa/pamoja/backend/internal/domain"
@@ -160,7 +159,6 @@ func (d Deps) stepUpFresh(p principal) bool {
 // The response is written only after the transaction commits.
 func (d Deps) idempotent(w http.ResponseWriter, r *http.Request, route string,
 	fn func(ctx context.Context, tx pgx.Tx, body []byte) (int, any, error)) {
-
 	p, ok := principalFrom(r.Context())
 	if !ok {
 		writeError(w, r, http.StatusUnauthorized, "unauthorized")
@@ -245,6 +243,3 @@ func (d Deps) writeDomainError(w http.ResponseWriter, r *http.Request, err error
 
 func groupIDFrom(r *http.Request) string         { return chi.URLParam(r, "groupID") }
 func idFrom(r *http.Request, name string) string { return chi.URLParam(r, name) }
-
-// pool is a small nil guard used by handlers that need a database.
-func (d Deps) pool() (*pgxpool.Pool, bool) { return d.Pool, d.Pool != nil }

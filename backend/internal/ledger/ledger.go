@@ -128,18 +128,22 @@ type Alogsys struct {
 	APIKey  string
 }
 
+// PostRepayment refuses until the vendor endpoint and credentials exist.
 func (a *Alogsys) PostRepayment(context.Context, pgx.Tx, Posting) (string, error) {
 	return "", errors.New("ledger: Alogsys connector is not configured; set LEDGER_ADAPTER=sandbox or supply vendor endpoints")
 }
 
+// ConfirmPosting refuses until the vendor endpoint and credentials exist.
 func (a *Alogsys) ConfirmPosting(context.Context, pgx.Tx, string) (bool, error) {
 	return false, errors.New("ledger: Alogsys connector is not configured")
 }
 
+// GetBalances refuses until the vendor endpoint and credentials exist.
 func (a *Alogsys) GetBalances(context.Context, pgx.Tx, string) ([]Balance, error) {
 	return nil, errors.New("ledger: Alogsys connector is not configured")
 }
 
+// ListDisbursements refuses until the vendor endpoint and credentials exist.
 func (a *Alogsys) ListDisbursements(context.Context, pgx.Tx, string) ([]Posting, error) {
 	return nil, errors.New("ledger: Alogsys connector is not configured")
 }

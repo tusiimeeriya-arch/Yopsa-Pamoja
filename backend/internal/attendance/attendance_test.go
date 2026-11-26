@@ -16,15 +16,6 @@ func day(s string) time.Time {
 
 func ptr(t time.Time) *time.Time { return &t }
 
-func meetings(n int, start string) []Meeting {
-	out := make([]Meeting, 0, n)
-	base := day(start)
-	for i := 0; i < n; i++ {
-		out = append(out, Meeting{ID: string(rune('A' + i)), ScheduledFor: base.AddDate(0, 0, i*7), Status: "closed"})
-	}
-	return out
-}
-
 // T-ATT-01: 6 of 8 meetings = 75 %.
 func TestIndividualSixOfEight(t *testing.T) {
 	ms := []Meeting{{ID: "1", ScheduledFor: day("2026-01-01"), Status: "closed"},

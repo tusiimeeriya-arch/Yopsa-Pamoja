@@ -272,7 +272,7 @@ func (d Deps) handleSubmitSubmission(w http.ResponseWriter, r *http.Request) {
 		d.writeDomainError(w, r, err)
 		return
 	}
-	d.idempotent(w, r, r.URL.Path, func(ctx context.Context, tx pgx.Tx, body []byte) (int, any, error) {
+	d.idempotent(w, r, r.URL.Path, func(ctx context.Context, tx pgx.Tx, _ []byte) (int, any, error) {
 		sub, err := d.Payments.Submit(ctx, tx, submissionID, p.UserID.String())
 		if err != nil {
 			return 0, nil, err
@@ -414,7 +414,7 @@ func (d Deps) handleRetryPosting(w http.ResponseWriter, r *http.Request) {
 		d.writeDomainError(w, r, err)
 		return
 	}
-	d.idempotent(w, r, r.URL.Path, func(ctx context.Context, tx pgx.Tx, body []byte) (int, any, error) {
+	d.idempotent(w, r, r.URL.Path, func(ctx context.Context, tx pgx.Tx, _ []byte) (int, any, error) {
 		ok, err := d.Payments.RetryPosting(ctx, tx, postingID, p.UserID.String())
 		if err != nil {
 			return 0, nil, err
@@ -536,7 +536,7 @@ func (d Deps) handleApproveCorrection(w http.ResponseWriter, r *http.Request) {
 		d.writeDomainError(w, r, err)
 		return
 	}
-	d.idempotent(w, r, r.URL.Path, func(ctx context.Context, tx pgx.Tx, body []byte) (int, any, error) {
+	d.idempotent(w, r, r.URL.Path, func(ctx context.Context, tx pgx.Tx, _ []byte) (int, any, error) {
 		if _, err := tx.Exec(ctx,
 			`UPDATE pamoja.correction SET status = 'approved', approved_by = $2::uuid, approved_at = now()
 			 WHERE id = $1::uuid AND status = 'requested'`, correctionID, p.UserID); err != nil {
@@ -568,7 +568,7 @@ func (d Deps) handleApplyCorrection(w http.ResponseWriter, r *http.Request) {
 		d.writeDomainError(w, r, err)
 		return
 	}
-	d.idempotent(w, r, r.URL.Path, func(ctx context.Context, tx pgx.Tx, body []byte) (int, any, error) {
+	d.idempotent(w, r, r.URL.Path, func(ctx context.Context, tx pgx.Tx, _ []byte) (int, any, error) {
 		var entityType, entityID string
 		if err := tx.QueryRow(ctx,
 			`SELECT entity_type, entity_id::text FROM pamoja.correction WHERE id = $1::uuid AND status = 'approved'`,

@@ -88,20 +88,12 @@ func (d Deps) handleCreateMeeting(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type meetingTransitionRequest struct {
-	Reason string `json:"reason"`
-}
-
 func (d Deps) handleOpenMeeting(w http.ResponseWriter, r *http.Request) {
 	d.meetingTransition(w, r, rbac.ActionEditDraft, "open")
 }
 
 func (d Deps) handleConfirmRegister(w http.ResponseWriter, r *http.Request) {
 	d.meetingTransition(w, r, rbac.ActionEditDraft, "register_confirmed")
-}
-
-func (d Deps) handleCloseMeeting(w http.ResponseWriter, r *http.Request) {
-	d.meetingTransition(w, r, rbac.ActionClose, "closed")
 }
 
 func (d Deps) meetingTransition(w http.ResponseWriter, r *http.Request, action rbac.Action, to string) {
@@ -116,7 +108,7 @@ func (d Deps) meetingTransition(w http.ResponseWriter, r *http.Request, action r
 		d.writeDomainError(w, r, err)
 		return
 	}
-	d.idempotent(w, r, r.URL.Path, func(ctx context.Context, tx pgx.Tx, body []byte) (int, any, error) {
+	d.idempotent(w, r, r.URL.Path, func(ctx context.Context, tx pgx.Tx, _ []byte) (int, any, error) {
 		var out meetingResponse
 		now := "now()"
 		column := map[string]string{
@@ -540,7 +532,7 @@ func (d Deps) handleAttendanceStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (d Deps) meetingGroup(ctx context.Context, p principal, meetingID string, r *http.Request) (string, error) {
+func (d Deps) meetingGroup(_ context.Context, _ principal, meetingID string, r *http.Request) (string, error) {
 	var groupID string
 	err := d.withActor(r, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT group_id::text FROM pamoja.meeting WHERE id = $1::uuid`, meetingID).Scan(&groupID)

@@ -62,14 +62,14 @@ func (f fixture) run(t *testing.T, actor string, fn func(context.Context, pgx.Tx
 		db.Actor{UserID: actor, Scopes: []string{f.tenant.GroupID}}, uuid.NewString(), fn)
 }
 
-func (f fixture) create(t *testing.T, amount int64) loans.Loan {
+func (f fixture) create(t *testing.T) loans.Loan {
 	t.Helper()
 	var out loans.Loan
 	err := f.run(t, f.applicant, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = f.service.CreateApplication(ctx, tx, loans.CreateApplicationInput{
 			GroupID: f.tenant.GroupID, ProductCode: "VSLA-STD", Kind: "group",
-			RequestedAmountUGX: amount, TermMonths: 12, Purpose: "Stock for the group shop",
+			RequestedAmountUGX: 2000000, TermMonths: 12, Purpose: "Stock for the group shop",
 			RepaymentSource: "Weekly market sales", AppliedBy: f.applicant,
 			IdempotencyKey: uuid.NewString(),
 		})
@@ -139,7 +139,7 @@ func (f fixture) approve(t *testing.T, id string) loans.Loan {
 // -> offer -> acceptance -> disbursement and checks the schedule.
 func TestFullBorrowingJourney(t *testing.T) {
 	f := setupFixture(t)
-	loan := f.create(t, 2000000)
+	loan := f.create(t)
 	if loan.Status != "group_authorised" || loan.ApprovedAmountUGX != 0 {
 		t.Fatalf("unexpected create: %+v", loan)
 	}
@@ -263,7 +263,7 @@ func (f fixture) mustIssueOffer(t *testing.T, id string) loans.Loan {
 // T-LOAN-03: the applicant may not approve their own application (SD-03).
 func TestApplicantCannotApprove(t *testing.T) {
 	f := setupFixture(t)
-	loan := f.create(t, 2000000)
+	loan := f.create(t)
 	f.appraise(t, loan.ID, 2000000)
 	f.review(t, loan.ID)
 
@@ -281,7 +281,7 @@ func TestApplicantCannotApprove(t *testing.T) {
 // T-LOAN-04: the approver may not confirm the disbursement (SD-04).
 func TestApproverCannotDisburse(t *testing.T) {
 	f := setupFixture(t)
-	loan := f.create(t, 2000000)
+	loan := f.create(t)
 	f.appraise(t, loan.ID, 2000000)
 	f.review(t, loan.ID)
 	loan = f.approve(t, loan.ID)
@@ -309,7 +309,7 @@ func TestApproverCannotDisburse(t *testing.T) {
 // A-010: above the guarantor threshold, approval needs a checked guarantee.
 func TestApprovalNeedsCheckedGuarantee(t *testing.T) {
 	f := setupFixture(t)
-	loan := f.create(t, 2000000)
+	loan := f.create(t)
 	f.appraise(t, loan.ID, 0)
 	f.review(t, loan.ID)
 
@@ -327,7 +327,7 @@ func TestApprovalNeedsCheckedGuarantee(t *testing.T) {
 // A-034: a material change after approval sends the application back to review.
 func TestMaterialChangeForcesReapproval(t *testing.T) {
 	f := setupFixture(t)
-	loan := f.create(t, 2000000)
+	loan := f.create(t)
 	f.appraise(t, loan.ID, 2000000)
 	f.review(t, loan.ID)
 	loan = f.approve(t, loan.ID)

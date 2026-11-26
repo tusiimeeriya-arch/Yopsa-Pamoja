@@ -173,9 +173,60 @@ P3 → P4 → P5 → P6 → P7 → P8 → P9 → P10. No reordering.
   - `TEST_DATABASE_URL=… go test -p 1 ./...` → PASS (every package).
   - `go vet ./...` → PASS; `gofmt -l .` → empty.
 
+## P8 — DONE
+
+- Migration `000008_p8_offline.up.sql`: `sync_batch` (client time, server time,
+  measured skew, applied/conflict counts) and `sync_operation` (one row per
+  queued change with a unique idempotency key, its payload and its outcome);
+  forced RLS on both.
+- `internal/offline`: replays a device batch in order. Each operation runs
+  inside a savepoint, so a refusal is recorded against that operation and the
+  rest of the batch still applies; a replayed idempotency key returns the
+  recorded outcome instead of applying the change twice; the server's clock
+  wins and the skew is returned.
+- HTTP surface: `POST /api/v1/groups/{groupID}/sync/batches` and
+  `GET /api/v1/groups/{groupID}/sync/batches/{batchID}`.
+- Evidence:
+  - `TEST_DATABASE_URL=… go test -race ./...` → PASS (every package).
+  - `go vet ./...` → PASS; `gofmt -l .` → empty.
+
+## CI repair — DONE
+
+The `Backend — format, vet, lint, test` and `Security` jobs failed on the P4–P8
+commit. Fixed in one pass, without changing behaviour that the tests pin:
+
+- Lint: doc comments on the `Alogsys` methods, unused request bodies and
+  parameters renamed to `_`, `fmt.Fprintf` on a hash checked, two needless
+  conversions removed, dead helpers (`meetings`, `meetingTransitionRequest`,
+  `handleCloseMeeting`, `Deps.pool`) deleted, `fixture.create` no longer takes
+  an amount every caller passed as the same value.
+- gosec: `#nosec` with a reason on the development role password and on the
+  migrations glob read.
+- Offline sync bug: the operation `result` was cast from an empty string, so a
+  rejected or conflicted operation aborted the whole batch; it is now
+  `NULLIF($9, '')::jsonb`. A database error is no longer folded into a
+  "rejected" outcome inside a dead transaction.
+- Payments bug: a duplicate idempotency key aborted the caller's transaction.
+  `CreateEntry` now uses `ON CONFLICT (idempotency_key) DO NOTHING` and reports
+  a conflict (or not-found for an unknown group) with the transaction intact.
+- Test harness: migrations are applied only when the database is behind, so
+  parallel test packages no longer run DDL against tables other packages are
+  reading (the cause of the intermittent `deadlock detected`). Offline test
+  idempotency keys are unique per run.
+- Coverage gate: payments 63.8 % → 86.6 %, loans 62.1 % → 88.4 %; the gate now
+  passes. New tests cover the validation paths and, with a failing-transaction
+  wrapper, prove each database error is returned instead of swallowed.
+- Evidence:
+  - `gofmt -l .` → empty; `go vet ./...` → PASS; `golangci-lint v2.15.0 run
+    ./...` → `0 issues`; `gosec ./...` → no findings.
+  - `TEST_DATABASE_URL=… go test -race -coverprofile=… ./...` → PASS.
+  - `scripts/check-coverage.sh` → payments 86.6 %, loans 88.4 %, rbac 88.1 %,
+    audit 96.2 %, attendance 98.4 % (all above 85 %).
+
 ## Next
 
-P8 — offline outbox and idempotent sync with conflict detection and server time.
+P9 — operations: audit log review tooling, metrics, rate limiting and backup
+drills. Then P10 — end-to-end pass, seed data and handover.
 
 ## Open blockers
 

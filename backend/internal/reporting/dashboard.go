@@ -200,7 +200,7 @@ func collectRows(rows pgx.Rows) ([]map[string]any, error) {
 		}
 		row := make(map[string]any, len(fields))
 		for i, f := range fields {
-			row[string(f.Name)] = values[i]
+			row[f.Name] = values[i]
 		}
 		out = append(out, row)
 	}

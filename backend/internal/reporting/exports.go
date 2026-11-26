@@ -93,7 +93,7 @@ func (s *Service) Generate(ctx context.Context, tx pgx.Tx, groupID, kind string,
 	writer := csv.NewWriter(&buf)
 	header := make([]string, len(fields))
 	for i, f := range fields {
-		header[i] = string(f.Name)
+		header[i] = f.Name
 	}
 	if err := writer.Write(header); err != nil {
 		return Export{}, "", err

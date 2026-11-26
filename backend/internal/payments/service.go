@@ -124,6 +124,7 @@ func (s *Service) CreateEntry(ctx context.Context, tx pgx.Tx, in CreateEntryInpu
 		        $5, $6, $7, $8, NULLIF($9, '')::uuid, $10, $11::uuid, $12, $13
 		 FROM pamoja.groups g
 		 WHERE g.id = $1::uuid
+		 ON CONFLICT (idempotency_key) DO NOTHING
 		 RETURNING id, group_id, member_id, COALESCE(submission_id::text, ''), category,
 		           amount_ugx, paid_on, channel, source_ref, COALESCE(evidence_id::text, ''),
 		           status, recorded_by, recorded_via`,
@@ -134,6 +135,20 @@ func (s *Service) CreateEntry(ctx context.Context, tx pgx.Tx, in CreateEntryInpu
 			&out.AmountUGX, &out.PaidOn, &out.Channel, &out.SourceRef, &out.EvidenceID,
 			&out.Status, &out.RecordedBy, &out.RecordedVia)
 	if err != nil {
+		// A duplicate key is caught by ON CONFLICT DO NOTHING, so the
+		// transaction stays usable and the caller can report a conflict.
+		if errors.Is(err, pgx.ErrNoRows) {
+			var groupExists bool
+			if qerr := tx.QueryRow(ctx,
+				`SELECT EXISTS (SELECT 1 FROM pamoja.groups WHERE id = $1::uuid)`,
+				in.GroupID).Scan(&groupExists); qerr != nil {
+				return Entry{}, qerr
+			}
+			if groupExists {
+				return Entry{}, domain.ErrConflict
+			}
+			return Entry{}, domain.ErrNotFound
+		}
 		if isUniqueViolation(err) {
 			return Entry{}, domain.ErrConflict
 		}
