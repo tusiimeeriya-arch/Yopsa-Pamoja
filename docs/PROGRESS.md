@@ -4,7 +4,7 @@
 **Working branch:** `overnight-autonomous-mode` (the sandbox's prepared branch; the
 platform owns commits and branch switching, so the requested `build/overnight`
 name is recorded here rather than checked out — see BLOCKERS B-01).
-**Current phase / step:** P3 complete — starting P4.
+**Current phase / step:** P4 complete — starting P5.
 
 ## How to resume
 
@@ -30,7 +30,7 @@ P3 → P4 → P5 → P6 → P7 → P8 → P9 → P10. No reordering.
 |---|---|---|
 | G0 | Baseline: P1 stack boots, existing tests, docs index | DONE |
 | P3 | Registration dependency, meetings, register, attendance formulas, minutes, action items, controlled amendments | DONE |
-| P4 | Payment entries, group submissions, receipts, allocations, postings, finance exceptions, corrections, sandbox ledger | TODO |
+| P4 | Payment entries, group submissions, receipts, allocations, postings, finance exceptions, corrections, sandbox ledger | DONE |
 | P5 | Loan products, applications, appraisal, mandatory operations review, approval, offers, disbursement | TODO |
 | P6 | Dashboard cards/drill-downs, reports, audited exports, ranking snapshots | TODO |
 | P7 | Learning, comments, disputes, tasks, notifications | TODO |
@@ -64,10 +64,33 @@ P3 → P4 → P5 → P6 → P7 → P8 → P9 → P10. No reordering.
   - `go test ./internal/rbac/ ./internal/httpapi/` → PASS after matrix
     regeneration (`check_in` action; 104 grants, 11 SoD rules).
 
+## P4 — DONE
+
+- Migration `000004_p4_payments.up.sql`: payment entries, group submissions,
+  receipts, allocations, ledger postings, finance exceptions, corrections and
+  the sandbox ledger; forced RLS; triggers for entry/submission/receipt
+  immutability, allocation caps, posting and correction transitions.
+- `internal/payments`: pure `PlanVerification` (full vs logged partial, no
+  automatic spread), evidence and cash-path checks, verifier independence,
+  lock hash; service that writes receipt → allocation → posting in one
+  transaction, serialises verification with `FOR UPDATE`, creates a
+  `Posting pending` state plus finance exception on ledger failure, and retries.
+- `internal/ledger`: `LedgerAdapter` with the working sandbox implementation
+  and an explicit Alogsys skeleton that refuses to pretend it works.
+- HTTP surface: entries, lock/submit/verify/return, posting retry, summary,
+  corrections, finance exceptions.
+- Evidence:
+  - `go test -p 1 ./internal/payments/` → PASS
+    (T-PAY-01, 04, 05, 06, 08, 09; three facts; summary separation).
+  - `go test -race -p 1 ./...` → PASS (all packages, including P1 auth
+    integration against `pamoja_test`).
+  - `go vet ./...` → PASS; `gofmt -l .` → empty.
+
 ## Next
 
-P4 migration `000004_p4_payments.up.sql`, then `internal/payments` and the
-sandbox ledger adapter.
+P5 migration `000005_p5_loans.up.sql`, then `internal/loans` (mandatory
+operations review, approval ≠ disbursement, guarantor threshold, material
+change, product-version terms).
 
 ## Open blockers
 

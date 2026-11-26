@@ -26,7 +26,7 @@ import (
 	"github.com/yopsa/pamoja/backend/internal/platform/keyring"
 )
 
-const appRolePassword = "pamoja_test_app_password"
+const appRolePassword = "pamoja_app_dev_password"
 
 var (
 	setupOnce sync.Once

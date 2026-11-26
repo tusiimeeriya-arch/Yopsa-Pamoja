@@ -21,7 +21,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const AppRolePassword = "pamoja_test_app_password"
+// AppRolePassword matches the development stack so running integration tests
+// against the same PostgreSQL cluster never changes the password the live
+// preview API uses.
+const AppRolePassword = "pamoja_app_dev_password"
 
 var (
 	once      sync.Once
