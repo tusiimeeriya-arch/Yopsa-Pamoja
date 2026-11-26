@@ -4,7 +4,7 @@
 **Working branch:** `overnight-autonomous-mode` (the sandbox's prepared branch; the
 platform owns commits and branch switching, so the requested `build/overnight`
 name is recorded here rather than checked out — see BLOCKERS B-01).
-**Current phase / step:** P6 complete — starting P7.
+**Current phase / step:** P7 complete — starting P8.
 
 ## How to resume
 
@@ -33,8 +33,8 @@ P3 → P4 → P5 → P6 → P7 → P8 → P9 → P10. No reordering.
 | P4 | Payment entries, group submissions, receipts, allocations, postings, finance exceptions, corrections, sandbox ledger | DONE |
 | P5 | Loan products, applications, appraisal, mandatory operations review, approval, offers, disbursement | DONE |
 | P6 | Dashboard cards/drill-downs, reports, audited exports, ranking snapshots | DONE |
-| P7 | Learning, comments, disputes, tasks, notifications | IN PROGRESS |
-| P8 | Offline outbox, idempotent sync, conflicts, server time | TODO |
+| P7 | Learning, comments, disputes, tasks, notifications | DONE |
+| P8 | Offline outbox, idempotent sync, conflicts, server time | IN PROGRESS |
 | P9 | Audit verification, metrics, rate limits, backup/restore drill, k6 | TODO |
 | P10 | E2E acceptance journeys, seed, runbooks, user guides, handover, morning report | TODO |
 
@@ -148,10 +148,34 @@ P3 → P4 → P5 → P6 → P7 → P8 → P9 → P10. No reordering.
   - `TEST_DATABASE_URL=… go test -p 1 ./...` → PASS (every package).
   - `go vet ./...` → PASS; `gofmt -l .` → empty.
 
+## P7 — DONE
+
+- Migration `000007_p7_engagement.up.sql`: learning items (three published,
+  shipped with the build), per-member progress with a completion stamp,
+  comments with moderation evidence, disputes whose closure needs a resolver and
+  a note, tasks whose closure records who closed them, and user-owned
+  notifications; forced RLS throughout (notifications are owner-only).
+- `internal/engagement`: pure rules (`ValidateCommentBody`,
+  `CanTransitionDispute`, `RequiresResolutionNote`) plus the service for
+  progress, comments, disputes, tasks and notifications.
+- RBAC: added the `complete` action and granted it for learning to member
+  (self) and secretary/treasurer/chairperson/field officer (group/branch);
+  `docs/RBAC.md` regenerated (10 roles, 104 grants, 11 separation rules).
+- HTTP surface: learning progress record/list, comment create/list/moderate,
+  dispute raise/list/resolve, task create/list/close, notifications list and
+  mark-read.
+- Evidence:
+  - `go test ./internal/engagement/` → PASS (T-ENG-01/02).
+  - `TEST_DATABASE_URL=… go test -p 1 ./internal/engagement/` → PASS
+    (T-ENG-03…07: upsert with completion stamp, moderation hiding the comment
+    from the member view, dispute closure refused without a note and final once
+    closed, one-way task closure, notification ownership).
+  - `TEST_DATABASE_URL=… go test -p 1 ./...` → PASS (every package).
+  - `go vet ./...` → PASS; `gofmt -l .` → empty.
+
 ## Next
 
-P7 — learning items and progress, comments with moderation, attendance/payment
-disputes, follow-up tasks and notifications.
+P8 — offline outbox and idempotent sync with conflict detection and server time.
 
 ## Open blockers
 

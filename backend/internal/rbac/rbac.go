@@ -107,6 +107,7 @@ const (
 	ActionReviewOperations Action = "review_operations"
 	ActionAcceptOffer      Action = "accept_offer"
 	ActionClose            Action = "close"
+	ActionComplete         Action = "complete"
 	ActionRevoke           Action = "revoke"
 	ActionStepUp           Action = "step_up"
 )

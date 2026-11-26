@@ -6,7 +6,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/yopsa/pamoja/backend/internal/engagement"
 	"github.com/yopsa/pamoja/backend/internal/loans"
+	"github.com/yopsa/pamoja/backend/internal/offline"
 	"github.com/yopsa/pamoja/backend/internal/payments"
 	"github.com/yopsa/pamoja/backend/internal/platform/config"
 	"github.com/yopsa/pamoja/backend/internal/rbac"
@@ -16,14 +18,16 @@ import (
 // Deps are the collaborators a handler may use. Every field is optional so the
 // route registry can be inspected (and tested) without a running stack.
 type Deps struct {
-	Pool     *pgxpool.Pool
-	Logger   *slog.Logger
-	Config   config.Config
-	Version  string
-	Auth     AuthService
-	Payments *payments.Service
-	Loans    *loans.Service
-	Reports  *reporting.Service
+	Pool       *pgxpool.Pool
+	Logger     *slog.Logger
+	Config     config.Config
+	Version    string
+	Auth       AuthService
+	Payments   *payments.Service
+	Loans      *loans.Service
+	Reports    *reporting.Service
+	Engagement *engagement.Service
+	Offline    *offline.Service
 }
 
 // Route is one entry of the HTTP surface. Routes are declared as data so that
@@ -103,5 +107,24 @@ func Routes(d Deps) []Route {
 		{Method: http.MethodGet, Pattern: "/api/v1/reports/exports/{exportID}", Module: rbac.ModuleReports, Action: rbac.ActionView, Handler: d.requireAuth(d.handleDownloadExport)},
 		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/ranking", Module: rbac.ModuleRanking, Action: rbac.ActionView, Handler: d.requireAuth(d.handleGroupRanking)},
 		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/ranking/snapshots", Module: rbac.ModuleRanking, Action: rbac.ActionConfigure, Handler: d.requireAuth(d.handleCreateRankingSnapshot)},
+
+		// P7 — learning progress, comments, disputes, tasks, notifications.
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/learning/progress", Module: rbac.ModuleLearning, Action: rbac.ActionComplete, Handler: d.requireAuth(d.handleRecordProgress)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/learning/progress", Module: rbac.ModuleLearning, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListProgress)},
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/comments", Module: rbac.ModuleComments, Action: rbac.ActionCreate, Handler: d.requireAuth(d.handleAddComment)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/comments", Module: rbac.ModuleComments, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListComments)},
+		{Method: http.MethodPost, Pattern: "/api/v1/comments/{commentID}/moderate", Module: rbac.ModuleComments, Action: rbac.ActionModerate, Handler: d.requireAuth(d.handleModerateComment)},
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/disputes", Module: rbac.ModuleDisputes, Action: rbac.ActionCreate, Handler: d.requireAuth(d.handleRaiseDispute)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/disputes", Module: rbac.ModuleDisputes, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListDisputes)},
+		{Method: http.MethodPost, Pattern: "/api/v1/disputes/{disputeID}/resolve", Module: rbac.ModuleDisputes, Action: rbac.ActionResolve, Handler: d.requireAuth(d.handleResolveDispute)},
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/tasks", Module: rbac.ModuleTasks, Action: rbac.ActionCreate, Handler: d.requireAuth(d.handleCreateTask)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/tasks", Module: rbac.ModuleTasks, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListTasks)},
+		{Method: http.MethodPost, Pattern: "/api/v1/tasks/{taskID}/close", Module: rbac.ModuleTasks, Action: rbac.ActionClose, Handler: d.requireAuth(d.handleCloseTask)},
+		{Method: http.MethodGet, Pattern: "/api/v1/notifications", Module: rbac.ModuleNotifications, Action: rbac.ActionView, Handler: d.requireAuth(d.handleListNotifications)},
+		{Method: http.MethodPost, Pattern: "/api/v1/notifications/{notificationID}/read", Module: rbac.ModuleNotifications, Action: rbac.ActionView, Handler: d.requireAuth(d.handleReadNotification)},
+
+		// P8 — offline outbox replay.
+		{Method: http.MethodPost, Pattern: "/api/v1/groups/{groupID}/sync/batches", Module: rbac.ModulePayments, Action: rbac.ActionCreate, Handler: d.requireAuth(d.handleSyncBatch)},
+		{Method: http.MethodGet, Pattern: "/api/v1/groups/{groupID}/sync/batches/{batchID}", Module: rbac.ModulePayments, Action: rbac.ActionView, Handler: d.requireAuth(d.handleSyncBatchStatus)},
 	}
 }
