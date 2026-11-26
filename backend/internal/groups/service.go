@@ -293,7 +293,7 @@ func (s *Service) CreateGroup(ctx context.Context, actor rbac.Actor, in CreateGr
 				"registration_status": group.RegistrationStatus,
 				"branch_id":           group.BranchID,
 				"type_code":           group.TypeCode,
-			}); err != nil {
+			}, ""); err != nil {
 			return err
 		}
 		created = group
@@ -462,7 +462,7 @@ func (s *Service) UpdateGroup(ctx context.Context, actor rbac.Actor, groupID str
 		if err := s.record(ctx, tx, requestID, actor.UserID, decision,
 			"registration.group.update", "group", group.ID,
 			group.BranchID,
-			groupSnapshot(group), groupSnapshot(updatedGroup)); err != nil {
+			groupSnapshot(group), groupSnapshot(updatedGroup), ""); err != nil {
 			return err
 		}
 		updated = updatedGroup
@@ -534,7 +534,7 @@ func (s *Service) SubmitGroup(ctx context.Context, actor rbac.Actor, groupID str
 		if err := s.record(ctx, tx, requestID, actor.UserID, decision,
 			"registration.group.submit", "group", group.ID,
 			group.BranchID,
-			groupSnapshot(group), groupSnapshot(submittedGroup)); err != nil {
+			groupSnapshot(group), groupSnapshot(submittedGroup), ""); err != nil {
 			return err
 		}
 		submitted = submittedGroup
@@ -788,7 +788,7 @@ func (s *Service) AddMembership(ctx context.Context, actor rbac.Actor, groupID s
 				"group_id":  groupID,
 				"member_no": memberNo,
 				"joined_on": joinedOn.Format("2006-01-02"),
-			}); err != nil {
+			}, ""); err != nil {
 			return err
 		}
 		added = &item
@@ -839,7 +839,7 @@ func (s *Service) EndMembership(ctx context.Context, actor rbac.Actor, groupID, 
 		if err := s.record(ctx, tx, requestID, actor.UserID, decision,
 			"registration.membership.end", "membership", item.ID,
 			group.BranchID, nil,
-			map[string]any{"left_on": leftOn.Format("2006-01-02")}); err != nil {
+			map[string]any{"left_on": leftOn.Format("2006-01-02")}, ""); err != nil {
 			return err
 		}
 		ended = &item
@@ -965,7 +965,7 @@ func (s *Service) AppointAuthority(ctx context.Context, actor rbac.Actor, groupI
 				"member_id":      in.MemberID,
 				"office":         office,
 				"effective_from": item.EffectiveFrom,
-			}); err != nil {
+			}, ""); err != nil {
 			return err
 		}
 		appointed = &item
@@ -1016,7 +1016,7 @@ func (s *Service) EndAuthority(ctx context.Context, actor rbac.Actor, groupID, a
 		if err := s.record(ctx, tx, requestID, actor.UserID, decision,
 			"registration.authority.end", "authority_record", item.ID,
 			group.BranchID, nil,
-			map[string]any{"effective_to": item.EffectiveTo}); err != nil {
+			map[string]any{"effective_to": item.EffectiveTo}, ""); err != nil {
 			return err
 		}
 		ended = &item
@@ -1091,7 +1091,7 @@ func (s *Service) RecordConsent(ctx context.Context, actor rbac.Actor, memberID 
 				"purpose":        purpose,
 				"granted":        in.Granted,
 				"notice_version": noticeVersion,
-			}); err != nil {
+			}, ""); err != nil {
 			return err
 		}
 		recorded = &item
