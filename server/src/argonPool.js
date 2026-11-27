@@ -20,7 +20,6 @@ const pending = new Map();
 function spawn() {
   const worker = new Worker(new URL('./argonWorker.js', import.meta.url));
   worker.ids = new Set();
-  worker.unref();
   worker.on('message', (msg) => {
     const job = pending.get(msg.id);
     if (!job) return;
@@ -40,6 +39,10 @@ function spawn() {
   };
   worker.on('error', lost);
   worker.on('exit', (code) => { if (code !== 0) lost(new Error(`argon2 worker exited with code ${code}`)); });
+  // unref() must come after the 'message' listener: attaching the listener
+  // refs the worker's port, and a short-lived CLI process (seed, checks) would
+  // then never exit.
+  worker.unref();
   return worker;
 }
 
