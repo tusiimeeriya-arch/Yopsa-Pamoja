@@ -772,6 +772,29 @@ CREATE TRIGGER trg_audit_no_update BEFORE UPDATE OR DELETE ON audit_logs FOR EAC
 DROP TRIGGER IF EXISTS trg_audit_no_truncate ON audit_logs;
 CREATE TRIGGER trg_audit_no_truncate BEFORE TRUNCATE ON audit_logs FOR EACH STATEMENT EXECUTE FUNCTION audit_logs_append_only();
 
+-- Real records are never hard-deleted. A user is disabled, a membership or a
+-- role assignment is end-dated, a group is closed and a person is archived, so
+-- the audit trail keeps pointing at the same row. Test and demo rows
+-- (is_demo = true) stay deletable: the demo purge and the self-tests clean up
+-- after themselves, and nothing else does.
+CREATE OR REPLACE FUNCTION record_no_hard_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.is_demo THEN RETURN OLD; END IF;
+  RAISE EXCEPTION '% % cannot be deleted; disable or end-date it instead', TG_TABLE_NAME, OLD.id
+    USING ERRCODE = '42501';
+END $$;
+
+DROP TRIGGER IF EXISTS trg_no_delete_users ON users;
+CREATE TRIGGER trg_no_delete_users BEFORE DELETE ON users FOR EACH ROW EXECUTE FUNCTION record_no_hard_delete();
+DROP TRIGGER IF EXISTS trg_no_delete_persons ON persons;
+CREATE TRIGGER trg_no_delete_persons BEFORE DELETE ON persons FOR EACH ROW EXECUTE FUNCTION record_no_hard_delete();
+DROP TRIGGER IF EXISTS trg_no_delete_groups ON groups;
+CREATE TRIGGER trg_no_delete_groups BEFORE DELETE ON groups FOR EACH ROW EXECUTE FUNCTION record_no_hard_delete();
+DROP TRIGGER IF EXISTS trg_no_delete_memberships ON memberships;
+CREATE TRIGGER trg_no_delete_memberships BEFORE DELETE ON memberships FOR EACH ROW EXECUTE FUNCTION record_no_hard_delete();
+DROP TRIGGER IF EXISTS trg_no_delete_role_assignments ON role_assignments;
+CREATE TRIGGER trg_no_delete_role_assignments BEFORE DELETE ON role_assignments FOR EACH ROW EXECUTE FUNCTION record_no_hard_delete();
+
 -- ===========================================================================
 -- Row-level security. The API connects as pamoja_app (not the owner, not a
 -- superuser), so a query that forgets its scope returns nothing at all.

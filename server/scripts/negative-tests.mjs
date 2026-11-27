@@ -12,6 +12,9 @@ import pg from 'pg';
 const BASE = process.env.API_BASE || 'http://api:8080/api';
 const PASSWORD = process.env.DEMO_PASSWORD || 'PamojaDemo#2026';
 const owner = new pg.Client({ connectionString: process.env.ADMIN_DATABASE_URL || process.env.DATABASE_URL });
+// A separate connection as the least-privilege application role, used to prove
+// that no HTTP request left app.system switched on for the API's own pool.
+const appDb = new pg.Client({ connectionString: process.env.DATABASE_URL });
 
 const TAG = 'NEG-' + Date.now();
 const STARTED_AT = new Date();
@@ -65,6 +68,7 @@ function client(cookie) {
     get: (p, h) => call('GET', p, undefined, h),
     post: (p, b, h) => call('POST', p, b ?? {}, h),
     patch: (p, b, h) => call('PATCH', p, b ?? {}, h),
+    del: (p, h) => call('DELETE', p, undefined, h),
     otp: async (purpose) => {
       const r = await call('POST', '/auth/otp/request', { purpose });
       if (!r.ok) throw new Error(`otp request failed: ${describe(r)}`);
@@ -75,6 +79,7 @@ function client(cookie) {
 
 async function main() {
   await owner.connect();
+  await appDb.connect();
   safetyBefore = (await owner.query(SAFETY_QUERY)).rows[0];
 
   const q = async (sql, params) => (await owner.query(sql, params)).rows;
@@ -95,6 +100,8 @@ async function main() {
   const verifier = client(await login('verifier@yopsa.demo'));
   const approver = client(await login('approver@yopsa.demo'));
   const officer = client(await login('officer@yopsa.demo'));
+  const officer2 = client(await login('officer2@yopsa.demo'));
+  const manager = client(await login('manager@yopsa.demo'));
   const admin = client(await login('admin@yopsa.demo'));
 
   // One-time codes requested during this run are test artefacts. Only rows for
@@ -184,12 +191,13 @@ async function main() {
 
   // 7. Treasurer verifying their own submission
   {
-    await owner.query(
-      `INSERT INTO role_assignments (user_id, role, scope_type, scope_id, effective_from, status, granted_by, approved_by)
-       VALUES ($1,'verifier','Org','org',current_date,'active',$1,$1)`,
+    const granted = (await owner.query(
+      `INSERT INTO role_assignments (user_id, role, scope_type, scope_id, effective_from, status, granted_by, approved_by, is_demo)
+       VALUES ($1,'verifier','Org','org',current_date,'active',$1,$1,true) RETURNING id`,
       [users['treasurer@yopsa.demo']],
-    );
-    cleanup.push(["DELETE FROM role_assignments WHERE user_id=$1 AND role='verifier'", [users['treasurer@yopsa.demo']]]);
+    )).rows[0];
+    // Clean up exactly the row this run created, never a broader filter.
+    cleanup.push(['DELETE FROM role_assignments WHERE id=$1', [granted.id]]);
     const r = await treasurer.post(`/payments/submissions/${sub1.id}/verify`, {}, { 'x-pamoja-otp': await treasurer.otp('verify') });
     (r.status === 403 ? pass : fail)('Treasurer verifying their own submission', describe(r));
   }
@@ -223,6 +231,67 @@ async function main() {
     }, { 'x-pamoja-otp': await verifier.otp('disburse') });
     (r.status === 403 ? pass : fail)('Disbursing without Operations review', describe(r));
   }
+
+  // 10. app_system() cannot be turned on by an ordinary HTTP request: the
+  //     parameter, a header and a SQL-looking body value all leave the
+  //     row-level policy in force, and a fresh application-role session has
+  //     the switch off.
+  {
+    const day = new Date().toISOString().slice(0, 10);
+    const plain = await member.get(`/groups/${g2.id}`);
+    const viaQuery = await member.get(`/groups/${g2.id}?app.system=on&system=on`);
+    const viaHeader = await member.get(`/groups/${g2.id}`, { 'x-pamoja-system': 'on', 'x-pamoja-app-system': 'on' });
+    const inj = await treasurer.post('/payments/entries', {
+      groupId: g1.id, memberPersonId: members[0].person_id, category: 'savings', amount: 1000,
+      collectionDate: day, idempotencyKey: TAG + '-sysinj',
+      note: "x'); SELECT set_config('app.system','on',true); --",
+    });
+    cleanup.push(['DELETE FROM payment_entries WHERE id=$1', [inj.body?.entry?.id]]);
+    cleanup.push(['DELETE FROM idempotency_keys WHERE key=$1', [TAG + '-sysinj']]);
+    const after = await member.get(`/groups/${g2.id}`);
+    const appSystem = (await appDb.query('SELECT app_system() AS on')).rows[0].on;
+    const ok = refused(plain) && refused(viaQuery) && refused(viaHeader) && refused(after) && appSystem === false;
+    (ok ? pass : fail)('app_system cannot be enabled over HTTP',
+      `plain: ${describe(plain)} | query: ${describe(viaQuery)} | header: ${describe(viaHeader)} | after payload: ${describe(after)} | fresh app session app_system(): ${appSystem}`);
+  }
+
+  // 11. There is no HTTP route that hard-deletes a protected record.
+  {
+    const [person] = await q('SELECT id FROM persons LIMIT 1');
+    const [ra] = await q('SELECT id FROM role_assignments LIMIT 1');
+    const dGroup = await admin.del(`/groups/${g1.id}`);
+    const dPerson = await admin.del(`/persons/${person.id}`);
+    const dRole = await admin.del(`/admin/role-assignments/${ra.id}`);
+    const dUser = await admin.del(`/admin/users/${users['member@yopsa.demo']}`);
+    const stillThere = (await q('SELECT count(*)::int AS n FROM groups WHERE id=$1', [g1.id]))[0].n;
+    const ok = [dGroup, dPerson, dRole, dUser].every((r) => r.status === 404) && stillThere === 1;
+    (ok ? pass : fail)('No hard-delete route for protected records',
+      `group: ${describe(dGroup)} | person: ${describe(dPerson)} | role: ${describe(dRole)} | user: ${describe(dUser)} | group still present: ${stillThere}`);
+  }
+
+  // 12. Registration review: the creator cannot review their own group, a
+  //     branch officer cannot review another branch, and activation needs an
+  //     independent approval first.
+  {
+    const [kla] = await q("SELECT id FROM org_branches WHERE code='KLA'");
+    const mk = async (suffix) => (await owner.query(
+      `INSERT INTO groups (name, type, branch_id, status, created_by, is_demo, submitted_at)
+       VALUES ($1,'VSLA',$2,'Submitted',$3,true,now()) RETURNING id`,
+      [`${TAG} registration ${suffix}`, kla.id, users['officer@yopsa.demo']],
+    )).rows[0].id;
+    const own = await mk('own');
+    const early = await mk('early');
+    cleanup.push(['DELETE FROM groups WHERE id = ANY($1::uuid[])', [[own, early]]]);
+    const creatorReview = await officer.post(`/groups/${own}/review`, { decision: 'approve' });
+    const otherBranchReview = await officer2.post(`/groups/${own}/review`, { decision: 'approve' });
+    const activateBeforeApproval = await manager.post(`/groups/${early}/activate`, {});
+    const review = await manager.post(`/groups/${own}/review`, { decision: 'approve' });
+    const activate = await manager.post(`/groups/${own}/activate`, {});
+    const ok = refused(creatorReview) && refused(otherBranchReview)
+      && activateBeforeApproval.status === 400 && review.status === 200 && activate.status === 200;
+    (ok ? pass : fail)('Registration review separation',
+      `creator review: ${describe(creatorReview)} | other branch: ${describe(otherBranchReview)} | activate before approval: ${describe(activateBeforeApproval)} | independent review: ${describe(review)} | activate: ${describe(activate)}`);
+  }
 }
 
 async function run() {
@@ -243,6 +312,7 @@ async function run() {
     }
     try { safetyAfter = (await owner.query(SAFETY_QUERY)).rows[0]; } catch { /* reported below */ }
     await owner.end();
+    await appDb.end();
   }
   const width = Math.max(...results.map((r) => r.name.length), 10);
   console.log('\nNEGATIVE TESTS');
@@ -268,7 +338,12 @@ async function run() {
     }
   }
   console.log('='.repeat(100));
-  process.exit(failed || unsafe ? 1 : 0);
+  // CI floor: a test may be added, but silently removing one must fail the run.
+  const MIN_TESTS = Number(process.env.MIN_NEGATIVE_TESTS || 12);
+  if (results.length < MIN_TESTS) {
+    console.error(`expected at least ${MIN_TESTS} negative tests, got ${results.length}`);
+  }
+  process.exit(failed || unsafe || results.length < MIN_TESTS ? 1 : 0);
 }
 
 run();
