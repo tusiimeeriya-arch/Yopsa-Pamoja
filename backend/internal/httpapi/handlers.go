@@ -9,17 +9,7 @@ import (
 	"time"
 )
 
-const phase = "P1 — platform core (authentication and RLS)"
-
-func (d Deps) handleLanding(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_ = landingPage.Execute(w, landingData{
-		Version:     d.Version,
-		Environment: string(d.Config.AppEnv),
-		Phase:       phase,
-	})
-}
+const phase = "P6 — domain core and web client"
 
 func (d Deps) handleLiveness(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

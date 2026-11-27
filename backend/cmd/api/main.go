@@ -16,10 +16,12 @@ import (
 
 	"github.com/yopsa/pamoja/backend/internal/audit"
 	"github.com/yopsa/pamoja/backend/internal/auth"
+	"github.com/yopsa/pamoja/backend/internal/domain"
 	"github.com/yopsa/pamoja/backend/internal/httpapi"
 	"github.com/yopsa/pamoja/backend/internal/platform/config"
 	"github.com/yopsa/pamoja/backend/internal/platform/keyring"
 	"github.com/yopsa/pamoja/backend/internal/platform/logging"
+	"github.com/yopsa/pamoja/backend/internal/rbac"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=<semver>".
@@ -59,18 +61,24 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	matrix, err := rbac.Load()
+	if err != nil {
+		return fmt.Errorf("load rbac matrix: %w", err)
+	}
+	recorder := audit.New(pool)
 	authService := auth.NewService(auth.Options{
 		Pool:   pool,
 		Config: cfg.Auth,
 		Env:    string(cfg.AppEnv),
 		Keys:   keys,
-		Audit:  audit.New(pool),
+		Audit:  recorder,
 		Logger: log,
 	})
+	domainService := domain.New(pool, matrix, recorder, keys)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           httpapi.New(httpapi.Deps{Pool: pool, Logger: log, Config: cfg, Version: version, Auth: authService}),
+		Handler:           httpapi.New(httpapi.Deps{Pool: pool, Logger: log, Config: cfg, Version: version, Auth: authService, Domain: domainService}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
