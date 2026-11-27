@@ -6,8 +6,8 @@ export function idempotencyKey(value) {
 }
 
 /**
- * Run fn once per (user, key). A repeat with the same payload returns the
- * stored response; a repeat with a different payload is rejected.
+ * Run fn once per (user, key). A repeat with the same payload returns the exact
+ * stored response, byte for byte; a repeat with a different payload is rejected.
  */
 export async function withIdempotency(client, caller, key, fnName, payload, fn) {
   const k = idempotencyKey(key);
@@ -23,10 +23,15 @@ export async function withIdempotency(client, caller, key, fnName, payload, fn) 
     if (row.payload_hash !== hash || row.function !== fnName) {
       throw conflict('This idempotency key was already used with different details. Use a new key.', { code: 'IDEMPOTENCY_MISMATCH' });
     }
-    return { ...(row.response || {}), replayed: true };
+    return row.response || {};
   }
   if (!key || k.length < 8) throw badRequest('A client-generated idempotency key is required.');
   const result = await fn();
-  await client.query('UPDATE idempotency_keys SET response=$3 WHERE user_id=$1 AND key=$2', [caller.user.id, k, result]);
-  return { ...result, replayed: false };
+  // Return the stored copy, not the in-memory result, so a replay and the
+  // original response are serialized from exactly the same document.
+  const stored = await client.query(
+    'UPDATE idempotency_keys SET response=$3 WHERE user_id=$1 AND key=$2 RETURNING response',
+    [caller.user.id, k, result],
+  );
+  return stored.rows[0].response;
 }

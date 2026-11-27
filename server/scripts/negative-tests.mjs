@@ -14,8 +14,21 @@ const PASSWORD = process.env.DEMO_PASSWORD || 'PamojaDemo#2026';
 const owner = new pg.Client({ connectionString: process.env.ADMIN_DATABASE_URL || process.env.DATABASE_URL });
 
 const TAG = 'NEG-' + Date.now();
+const STARTED_AT = new Date();
 const results = [];
 const cleanup = [];
+
+// Every fixture this run creates is either deleted by the id the API returned
+// (cleanup below) or, for the append-only audit log, left in place by design.
+// This snapshot proves that no demo (non-test) row changed.
+const SAFETY_QUERY = `SELECT
+  (SELECT count(*)::int FROM groups WHERE is_demo) AS demo_groups,
+  (SELECT count(*)::int FROM payment_entries WHERE is_demo) AS demo_payment_entries,
+  (SELECT count(*)::int FROM receipts WHERE is_demo) AS demo_receipts,
+  (SELECT count(*)::int FROM loan_applications WHERE is_demo) AS demo_loans,
+  (SELECT count(*)::int FROM role_assignments WHERE is_demo) AS demo_roles,
+  (SELECT count(*)::int FROM audit_logs) AS audit_rows`;
+let safetyBefore = null;
 
 function pass(name, detail) { results.push({ name, pass: true, detail }); }
 function fail(name, detail) { results.push({ name, pass: false, detail }); }
@@ -62,6 +75,7 @@ function client(cookie) {
 
 async function main() {
   await owner.connect();
+  safetyBefore = (await owner.query(SAFETY_QUERY)).rows[0];
 
   const q = async (sql, params) => (await owner.query(sql, params)).rows;
   const [g1] = await q("SELECT * FROM groups WHERE name='Tukolere Wamu VSLA'");
@@ -83,15 +97,23 @@ async function main() {
   const officer = client(await login('officer@yopsa.demo'));
   const admin = client(await login('admin@yopsa.demo'));
 
-  // 1. A member reading another member's payments
+  // One-time codes requested during this run are test artefacts. Only rows for
+  // the accounts these tests drive, created after the run started, are removed.
+  const otpUsers = ['member', 'member2', 'treasurer', 'verifier', 'approver', 'officer', 'admin']
+    .map((name) => users[`${name}@yopsa.demo`]);
+  cleanup.push(['DELETE FROM otp_codes WHERE user_id = ANY($1::uuid[]) AND created_at >= $2', [otpUsers, STARTED_AT]]);
+
+  // 1. A member reading another member's payments, and another group's entries
   {
     const [memberPerson] = await q('SELECT id FROM persons WHERE linked_user_id=$1', [users['member@yopsa.demo']]);
     const own = await member.get(`/payments/entries?groupId=${g1.id}`);
     const others = (own.body?.entries || []).filter((e) => e.member_person_id !== memberPerson.id);
     const otherGroup = await member.get(`/payments/entries?groupId=${g2.id}`);
-    const ok = own.status === 200 && others.length === 0 && refused(otherGroup);
+    // member2 belongs to Group B; Group A must stay invisible to them.
+    const otherMembersGroup = await member2.get(`/payments/entries?groupId=${g1.id}`);
+    const ok = own.status === 200 && others.length === 0 && refused(otherGroup) && refused(otherMembersGroup);
     (ok ? pass : fail)('Member reading another member\'s payments',
-      `own group returned ${own.body?.entries?.length ?? 0} rows, all the member's own: ${others.length === 0}; other group: ${describe(otherGroup)}`);
+      `own group returned ${own.body?.entries?.length ?? 0} rows, all the member's own: ${others.length === 0}; other group: ${describe(otherGroup)}; member of another group: ${describe(otherMembersGroup)}`);
   }
 
   // 2. A treasurer from Group A touching Group B
@@ -140,7 +162,8 @@ async function main() {
     (ok ? pass : fail)('Forged ids and amounts', `over-allocate: ${describe(over)} | negative amount: ${describe(negative)} | forged group: ${describe(forgedGroup)}`);
   }
 
-  // 6. Replayed requests
+  // 6. Replayed requests: same key and payload -> same status and identical
+  //    body; same key with a different payload -> rejected.
   {
     const key = TAG + '-idem';
     const payload = {
@@ -153,9 +176,10 @@ async function main() {
     cleanup.push(['DELETE FROM idempotency_keys WHERE key=$1', [key]]);
     const replay = await treasurer.post('/payments/entries', payload);
     const changed = await treasurer.post('/payments/entries', { ...payload, amount: 21000 });
-    const ok = first.status === 201 && replay.ok && replay.body?.replayed === true
-      && replay.body?.entry?.id === entryId && changed.status === 409;
-    (ok ? pass : fail)('Replayed request', `first: ${first.status}, replay: ${replay.status} replayed=${replay.body?.replayed} sameId=${replay.body?.entry?.id === entryId}, changed payload: ${describe(changed)}`);
+    const identical = replay.text === first.text;
+    const ok = first.status === 201 && replay.status === first.status && identical && changed.status === 409;
+    (ok ? pass : fail)('Replayed request',
+      `first: ${first.status}, replay: ${replay.status}, identical body: ${identical}, sameId: ${replay.body?.entry?.id === entryId}, changed payload: ${describe(changed)}`);
   }
 
   // 7. Treasurer verifying their own submission
@@ -199,24 +223,25 @@ async function main() {
     }, { 'x-pamoja-otp': await verifier.otp('disburse') });
     (r.status === 403 ? pass : fail)('Disbursing without Operations review', describe(r));
   }
-
-  // member2 is used only to prove a second member cannot read group 1 entries.
-  {
-    const r = await member2.get(`/payments/entries?groupId=${g1.id}`);
-    (refused(r) ? pass : fail)('Member of another group reading Group A entries', describe(r));
-  }
 }
 
 async function run() {
+  let safetyAfter = null;
   try {
     await main();
   } catch (err) {
     fail('test harness', String(err.message));
   } finally {
-    // Cleanup entries are queued child-first, so delete in the same order.
+    // Cleanup entries are queued child-first, so delete in the same order. A
+    // missing id is skipped: a delete must never fall back to a broad filter.
     for (const [sql, params] of cleanup) {
+      if (params.some((v) => v === null || v === undefined || v === '')) {
+        console.error('cleanup skipped, missing id:', sql);
+        continue;
+      }
       try { await owner.query(sql, params); } catch (err) { console.error('cleanup failed:', sql, err.message); }
     }
+    try { safetyAfter = (await owner.query(SAFETY_QUERY)).rows[0]; } catch { /* reported below */ }
     await owner.end();
   }
   const width = Math.max(...results.map((r) => r.name.length), 10);
@@ -226,7 +251,24 @@ async function run() {
   const failed = results.filter((r) => !r.pass).length;
   console.log('='.repeat(100));
   console.log(`${results.length - failed} passed, ${failed} failed`);
-  process.exit(failed ? 1 : 0);
+
+  console.log('\nTEST DATA SAFETY (demo rows before -> after; audit log may only grow)');
+  console.log('='.repeat(100));
+  let unsafe = false;
+  if (!safetyBefore || !safetyAfter) {
+    console.log('FAIL  could not read the before/after snapshot');
+    unsafe = true;
+  } else {
+    for (const key of Object.keys(safetyBefore)) {
+      const b = Number(safetyBefore[key]);
+      const a = Number(safetyAfter[key]);
+      const ok = key === 'audit_rows' ? a >= b : a === b;
+      if (!ok) unsafe = true;
+      console.log(`${ok ? 'PASS' : 'FAIL'}  ${key.padEnd(width)}  ${b} -> ${a}`);
+    }
+  }
+  console.log('='.repeat(100));
+  process.exit(failed || unsafe ? 1 : 0);
 }
 
 run();

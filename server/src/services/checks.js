@@ -153,9 +153,9 @@ export async function runSystemChecks(actor) {
     const e1 = await recordPaymentEntry(tcaller, { groupId: group.id, memberPersonId: personA.id, category: 'savings', amount: 20000, collectionDate: today(), idempotencyKey: key });
     const e2 = await recordPaymentEntry(tcaller, { groupId: group.id, memberPersonId: personA.id, category: 'savings', amount: 20000, collectionDate: today(), idempotencyKey: key });
     if (e1.entry?.id) ids.entries.push(e1.entry.id);
-    const same = e2.replayed === true && e1.entry.id === e2.entry.id;
+    const same = e1.entry?.id && e1.entry.id === e2.entry?.id && JSON.stringify(e1) === JSON.stringify(e2);
     const diff = await expectReject(() => recordPaymentEntry(tcaller, { groupId: group.id, memberPersonId: personA.id, category: 'savings', amount: 21000, collectionDate: today(), idempotencyKey: key }), 'Same key with a different payload');
-    results.push(same && diff.rejected ? pass('idempotency', 'Idempotency: repeat returns one record, changed payload rejected', 'One entry, mismatch rejected') : fail('idempotency', 'Idempotency', `same=${same} diffRejected=${diff.rejected}`));
+    results.push(same && diff.rejected ? pass('idempotency', 'Idempotency: repeat returns the identical response, changed payload rejected', 'One entry, byte-identical replay, mismatch rejected') : fail('idempotency', 'Idempotency', `same=${same} diffRejected=${diff.rejected}`));
 
     // Cross-group / cross-branch
     const branchBCaller = callerFor(officer, 'field_officer', 'Branch', branchB.id);

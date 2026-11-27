@@ -1,0 +1,107 @@
+name: verify
+
+# Every push and pull request proves the security invariants and the acceptance
+# suites against a real PostgreSQL, not mocks:
+#   - the database proofs run as the least-privilege application role
+#   - the in-app system checks run through the HTTP API
+#   - the negative tests run through the HTTP API as real seeded users
+#   - npm audit and gitleaks guard dependencies and secrets
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Database proofs, system checks, negative tests, audit, secrets
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pamoja
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pamoja
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pamoja -d pamoja"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NODE_ENV: development
+      APP_ENV: development
+      ADMIN_DATABASE_URL: postgres://pamoja:postgres@localhost:5432/pamoja
+      DATABASE_URL: postgres://pamoja_app:pamoja_app_dev_password@localhost:5432/pamoja
+      AUTH_TOKEN_SECRET: ci-only-token-secret
+      PAMOJA_LOOKUP_KEY: ci-only-lookup-key
+      PAMOJA_MASTER_KEY: ci-only-master-key
+      DEMO_PASSWORD: PamojaDemo#2026
+      RUN_SCHEDULER: '0'
+      API_BASE: http://localhost:8080/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            web/package-lock.json
+
+      - name: Apply the schema as the owner
+        run: psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f server/src/schema.sql
+
+      - name: Set the application role password
+        run: psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER ROLE pamoja_app PASSWORD 'pamoja_app_dev_password'"
+
+      - name: Install API dependencies
+        working-directory: server
+        run: npm ci --no-audit --no-fund
+
+      - name: Seed demo data
+        working-directory: server
+        run: npm run seed
+
+      - name: Start the API
+        working-directory: server
+        run: |
+          node src/index.js > /tmp/api.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS "$API_BASE/health" > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo "API did not become healthy"; cat /tmp/api.log; exit 1
+
+      - name: Database proofs as pamoja_app
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=0 -f scripts/db-proof.sql
+
+      - name: In-app system checks
+        working-directory: server
+        run: node scripts/system-checks.mjs
+
+      - name: Negative tests
+        working-directory: server
+        run: node scripts/negative-tests.mjs
+
+      - name: API log
+        if: always()
+        run: cat /tmp/api.log
+
+      - name: npm audit (API and web)
+        run: |
+          (cd server && npm audit --audit-level=high)
+          (cd web && npm audit --audit-level=high)
+
+      - name: Secrets scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -2,6 +2,7 @@ import express from 'express';
 import { ready, als } from './db.js';
 import { AppError } from './errors.js';
 import { attachCaller } from './authz.js';
+import { isProduction } from './env.js';
 import { router as authRouter } from './routes/auth.js';
 import { router as meRouter } from './routes/me.js';
 import { router as groupsRouter } from './routes/groups.js';
@@ -11,7 +12,7 @@ import { router as loansRouter } from './routes/loans.js';
 import { router as dashboardRouter } from './routes/dashboard.js';
 import { router as supportRouter } from './routes/support.js';
 import { router as adminRouter } from './routes/admin.js';
-import { startScheduler } from './scheduler.js';
+import { assertSchedulerConfig, startScheduler } from './scheduler.js';
 
 const app = express();
 const PORT = Number(process.env.PORT || 8080);
@@ -110,9 +111,17 @@ app.use((err, req, res, next) => {
   else if (!err.status && (err.code === '22P02' || err.code === '22007')) { status = 400; message = 'One of the values is not in the expected format.'; }
   else if (!err.status && err.code === '23514') { status = 409; message = err.message; }
   else if (!err.status && err.code === '42501') { status = 403; message = 'That change is not permitted.'; }
-  if (status >= 500) console.error(JSON.stringify({ level: 'error', message: err.message, stack: process.env.NODE_ENV === 'production' ? undefined : err.stack, path: req.path }));
+  if (status >= 500) console.error(JSON.stringify({ level: 'error', message: err.message, stack: isProduction() ? undefined : err.stack, path: req.path }));
   res.status(status).json({ error: { code: err.code || 'INTERNAL', message: status >= 500 ? 'Something went wrong. Try again.' : message, ...(err.details ? { details: err.details } : {}) } });
 });
+
+// Refuse to boot a production process whose job intervals are below the floor.
+try {
+  assertSchedulerConfig();
+} catch (err) {
+  console.error(JSON.stringify({ level: 'error', message: 'refusing to start', reason: err.message }));
+  process.exit(1);
+}
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(JSON.stringify({ level: 'info', message: `pamoja api listening on ${PORT}` }));

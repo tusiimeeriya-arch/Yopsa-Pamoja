@@ -3,6 +3,7 @@ import { adminPool, adminTx } from './db.js';
 import { hashPassword } from './auth.js';
 import { DEFAULTS } from './config.js';
 import { addDays, today } from './util.js';
+import { isProduction } from './env.js';
 
 const BATCH = 'DEMO-2026-11';
 const PASSWORD = process.env.DEMO_PASSWORD || 'PamojaDemo#2026';
@@ -12,7 +13,7 @@ const ts = (daysAgo, hour = 10) => iso(daysAgo) + `T${String(hour).padStart(2, '
 function pick(seed, n) { return Math.abs(Math.sin(seed * 99991) * 10000) % n; }
 
 async function main() {
-  if (process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production') {
+  if (isProduction()) {
     console.error('Refusing to load demo data in production. Use `npm run create-admin` instead.');
     process.exit(1);
   }
@@ -157,7 +158,6 @@ async function main() {
         for (let k = 0; k < active.length; k += 1) {
           const roll = pick(gi * 100 + i * 13 + k, 100);
           const status = roll < 78 ? 'present' : roll < 88 ? 'late' : roll < 94 ? 'excused' : 'absent';
-          if (status === 'absent') continue;
           await c.query(
             `INSERT INTO attendance_records (meeting_id, person_id, status, method, recorded_by, checked_in_at)
              VALUES ($1,$2,$3,$4,$5,$6)`,
@@ -334,15 +334,22 @@ async function main() {
 
     // comments, disputes, tasks
     await c.query("INSERT INTO comments (group_id, body, visibility, author_user_id) VALUES ($1,'Reminder: bring your savings book to the next meeting.','group',$2)", [g1.id, secretary.id]);
-    const attendanceForDispute = (await c.query("SELECT a.* FROM attendance_records a JOIN meetings m ON m.id=a.meeting_id WHERE m.group_id=$1 AND a.person_id=$2 AND a.status='absent' LIMIT 1", [g1.id, g1m[3].person.id])).rows[0]
-      || (await c.query("SELECT a.* FROM attendance_records a JOIN meetings m ON m.id=a.meeting_id WHERE m.group_id=$1 LIMIT 1", [g1.id])).rows[0];
-    if (attendanceForDispute) {
-      await c.query(
-        `INSERT INTO disputes (kind, entity, entity_id, group_id, person_id, raised_by_user_id, reason, original_value, assigned_to_user_id, is_demo)
-         VALUES ('attendance','AttendanceRecord',$1,$2,$3,$4,'I attended this meeting but the register shows me absent. Please review.','absent',$5,true)`,
-        [attendanceForDispute.id, g1.id, g1m[3].person.id, member.id, officer.id],
-      );
-    }
+    // The dispute is based on a register entry that really says "absent" for
+    // the person raising it. There is no fallback to an unrelated row.
+    const attendanceForDispute = (await c.query(
+      `SELECT a.*, p.linked_user_id FROM attendance_records a
+         JOIN meetings m ON m.id=a.meeting_id
+         JOIN persons p ON p.id=a.person_id
+        WHERE m.group_id=$1 AND a.status='absent'
+        ORDER BY (p.linked_user_id IS NULL), a.person_id LIMIT 1`,
+      [g1.id],
+    )).rows[0];
+    if (!attendanceForDispute) throw new Error('seed: no absent attendance record exists to base the demo dispute on');
+    await c.query(
+      `INSERT INTO disputes (kind, entity, entity_id, group_id, person_id, raised_by_user_id, reason, original_value, assigned_to_user_id, is_demo)
+       VALUES ('attendance','AttendanceRecord',$1,$2,$3,$4,'I attended this meeting but the register shows me absent. Please review.','absent',$5,true)`,
+      [attendanceForDispute.id, g1.id, attendanceForDispute.person_id, attendanceForDispute.linked_user_id || member.id, officer.id],
+    );
     const myEntry = (await c.query("SELECT * FROM payment_entries WHERE member_person_id=$1 LIMIT 1", [g1m[3].person.id])).rows[0];
     if (myEntry) {
       await c.query(

@@ -1,5 +1,6 @@
 const BV = 'BUILT AND VERIFIED';
 const EX = 'EXCEPTION';
+const NVH = 'NOT VERIFIED HERE';
 const N = 'NOT BUILT';
 const it = (id, name, status, note, nextStep) => ({ id, name, status, note, nextStep: nextStep || null });
 
@@ -21,7 +22,7 @@ const stages = [
     it('P0-9', 'Install prompt on login with iPhone instructions', BV, 'Login.jsx beforeinstallprompt + iOS hint.'),
     it('P0-10', 'App shell: bottom nav on phones, side nav on desktop, header with user, role, Sign out', BV, 'web/src/Shell.jsx.'),
     it('P0-11', 'New accounts have no role until an administrator grants one', BV, 'createAdmin.js is the only bootstrap; role_assignments starts pending then approved by a second admin.'),
-    it('P0-12', 'Report: splash, wrong password, empty fields, logout, branding at 360 px and desktop', BV, 'Screenshots captured this session at 384 px (mobile) and desktop.'),
+    it('P0-12', 'Report: splash, wrong password, empty fields, logout, branding at 360 px and desktop', BV, 'Screenshots captured this session at 384 px (the preview mobile preset) and desktop; the 360 px layout was measured inside a 360 px frame with no sideways scroll.'),
   ] },
   { stage: 'P1', title: 'Data model and security foundation', items: [
     it('P1-1', 'Entities: Org, People, Groups, Meetings, Payments, Loans, Support, Ranking, Controls', BV, 'server/src/schema.sql (48 tables plus the new OTP, cash, member-loan, job and message tables).'),
@@ -79,7 +80,7 @@ const stages = [
     it('P4-6', 'allocateReceipt can never exceed the confirmed receipt', BV, 'DB:1 — the database trigger refuses 80,000 + 30,000 on a 100,000 receipt; CHK:allocation_cap_db PASS; NEG:5 over-allocation returns 409.'),
     it('P4-7', 'postToLedger failure gives Posting pending + FinanceException with owner and deadline', BV, 'CHK:posting_failure PASS.'),
     it('P4-8', 'requestCorrection and approveCorrection with an independent approver', BV, 'Correction approval needs a one-time code and a different user; the DB trigger only allows the edit through an approved correction.'),
-    it('P4-9', 'Cash path: receipt, handover and deposit reconciliation as separate steps', BV, 'NEW: cash_reconciliations + three endpoints + Cash tab; CHK:cash_three_steps PASS; the trigger refuses same-person steps.'),
+    it('P4-9', 'Cash path: receipt, handover and deposit reconciliation as separate steps', BV, 'cash_reconciliations + three endpoints + Cash tab; CHK:cash_three_steps PASS; DB trigger refuses same-person handover/receipt and a deposit by either of them.'),
     it('P4-10', 'Categories kept separate', BV, 'loan_repayment, savings, shares, fines, subscriptions, social_fund, other.'),
     it('P4-11', 'Member view: own entries with Pending, Verified, Disputed, Posting pending, Returned chips', BV, '/api/me/payments and Payments → My payments.'),
     it('P4-12', 'Test: 200,000 submitted vs 180,000 received shows 20,000 difference and blocks', BV, 'CHK:payment_shortage PASS; demo group 1 is in that state.'),
@@ -104,7 +105,7 @@ const stages = [
     it('P5-9', 'Only confirmed Disbursements count as loans advanced', BV, 'Dashboard sums disbursements joined to loan_applications.'),
     it('P5-10', 'Repeat applications show existing obligations and an affordability check', BV, 'Performance profile + existing debts fields.'),
     it('P5-11', 'Transparent performance profile, not a numeric credit score', BV, '/groups/:id/performance.'),
-    it('P5-12', 'Internal member-to-member loans are a separate workflow (not double counted)', BV, 'NEW: member_loans table + endpoints + Loans screen; CHK:member_loans_separate PASS (Yopsa loans advanced unchanged).'),
+    it('P5-12', 'Internal member-to-member loans are a separate workflow (not double counted)', BV, 'member_loans table + endpoints + Loans screen; CHK:member_loans_separate PASS (Yopsa loans advanced stayed 0 in the check).'),
     it('P5-13', 'Tests: no authority, self-approval, 600,000 without guarantor blocked, 400,000 allowed', BV, 'Guards in transitionLoan; NEG:8 covers self-approval.'),
     it('P5-14', 'Tests: post-approval change re-approves; approved-not-disbursed excluded; disburser equals approver rejected', BV, 'CHK:disburser_separation PASS.'),
     it('P5-15', 'Screens: application wizard, status tracker, appraisal, review and approval queues', BV, 'Loans.jsx / LoanDetail.jsx.'),
@@ -158,12 +159,13 @@ const stages = [
     it('P9-6', 'No secrets, tokens or personal data in frontend, logs or errors', BV, 'Audit scrub; error handler hides 5xx details; no secret in the bundle.'),
     it('P9-7', 'Exports and reports respect scope and are audit-logged', BV, 'Export uses the caller scope and writes report.export.'),
     it('P9-8', 'Attempt limits on sensitive functions and idle timeout', BV, 'NEW: sensitive-route rate limit (60 changes/min per user) plus login and password-reset limits; idle timeout 30 min.'),
-    it('P9-9', 'Extra confirmation (one-time code) for verify, approve, disburse, role changes, corrections and exports', BV, 'NEW: OTP for verify, resolve, post, correction, approve, disburse, role_change, export, policy, purge, snapshot. Codes are hashed, expire in 5 minutes and are single-use.'),
+    it('P9-9', 'Extra confirmation (one-time code) for verify, approve, disburse, role changes, corrections and exports', BV, 'OTP for verify, resolve, post, correction, approve, disburse, role_change, export, policy, purge, snapshot. Codes are stored only as a hash, expire in 5 minutes, are single-use, rate-limited to 5 per 15 minutes and bound to the action; the code is returned only outside production, and production refuses to issue one without a real provider.'),
     it('P9-10', 'AuditLog hash-chain integrity check and admin Integrity check button', BV, 'CHK:audit_chain PASS; DB:3 refuses tampering.'),
-    it('P9-11', 'Admin System checks page runs attendance, shortage, allocation, self-verification, idempotency, cross-group/branch, IT Admin, disbursement and audit checks', BV, '25 checks, all PASS this session (including the new database-trigger, cash, member-loan and upload checks).'),
+    it('P9-11', 'Admin System checks page runs attendance, shortage, allocation, self-verification, idempotency, cross-group/branch, IT Admin, disbursement and audit checks', BV, '25/25 PASS after the fixes (run via server/scripts/system-checks.mjs; the replay check now requires a byte-identical response).'),
     it('P9-12', 'Login, splash and install files expose nothing sensitive and no demo credentials', BV, 'Demo guide is admin-only; login page has no credentials.'),
-    it('P9-13', 'Negative tests: the nine listed cases', BV, 'NEG:1–9 PASS with raw HTTP status and error code.'),
-    it('P9-14', 'PASS/FAIL table, fixes and residual platform risks', BV, 'This page plus the PR body; residual risks listed as exceptions.'),
+    it('P9-13', 'Negative tests: the nine listed cases', BV, 'NEG:1–9 PASS with raw HTTP status and error code; the run also proves demo rows were unchanged (see TEST DATA SAFETY).'),
+    it('P9-14', 'PASS/FAIL table, fixes and residual platform risks', BV, 'This page plus docs/VERIFICATION_REPORT.md and the PR body; residual risks listed as exceptions.'),
+    it('P9-15', 'CI: schema on a fresh PostgreSQL, database proofs, in-app checks, negative tests, npm audit and a gitleaks secrets scan', NVH, '.github/workflows/verify.yml added this session; it cannot be executed inside this sandbox.', 'Push the branch and confirm the first verify workflow run is green; if the fresh-database schema step fails, the SET search_path line at the top of schema.sql is the first thing to check.'),
   ] },
   { stage: 'P10', title: 'Demo data and end-to-end acceptance', items: [
     it('P10-1', '2 branches, 5 groups (one of each type), about 12 members each, a demo user per role', BV, 'Seed: 2 branches, 5 groups, 60 memberships, 14 demo users.'),
@@ -173,7 +175,7 @@ const stages = [
     it('P10-5', 'Learning items, open attendance and payment disputes, tasks, mock ledger, fewer than ten eligible groups', BV, 'Seed data.'),
     it('P10-6', 'Demo logins only on an admin Demo guide screen, never on login', BV, 'Admin → Demo guide.'),
     it('P10-7', 'Visible DEMO DATA banner while demo records exist', BV, 'Shell banner driven by /auth/me demoMode.'),
-    it('P10-8', 'Admin Purge demo data: only isDemo rows, confirmation, AuditLog entry, never deletes audit rows', BV, 'Purge requires the typed confirmation, a one-time code and keeps audit rows; the payment trigger allows demo deletion only inside this audited path.'),
+    it('P10-8', 'Admin Purge demo data: only isDemo rows, confirmation, AuditLog entry, never deletes audit rows', BV, 'Run end to end this session (purge, then reseed). Requires the typed confirmation and a one-time code, keeps audit rows, and the payment trigger allows demo deletion only inside this audited path. The new cash and member-loan tables were added to the purge order after it failed on a foreign key.'),
     it('P10-9', 'Go-live note to disable all demo accounts', BV, 'docs/RUN_WINDOWS.md + demo guide note; the seed refuses to run when NODE_ENV/APP_ENV=production.'),
     it('P10-10', 'Acceptance steps run in the app with PASS/FAIL and evidence', EX, 'Not re-run this session. The nine negative tests, 25 system checks and the database proofs cover the money and security paths, but the full 11-step acceptance journey has no script in the repository.', 'Write and run server/scripts/acceptance.mjs covering the 11 journeys, then record the PASS/FAIL table here.'),
     it('P10-11', 'About and Assumptions page lists every assumption and value awaiting management approval', BV, 'Admin → About and assumptions.'),
@@ -186,16 +188,17 @@ export function buildProgress() {
   for (const s of stages) for (const i of s.items) counts[i.status] = (counts[i.status] || 0) + 1;
   return {
     generatedAt: new Date().toISOString(),
-    statuses: { BV, EX, N },
+    statuses: { BV, EX, NVH, N },
     counts,
     stages,
-    note: 'BUILT AND VERIFIED means the item exists, matches this specification, and its check was run in this session (system checks, negative tests, database proofs or scheduled-job records). EXCEPTION carries the exact next step.',
+    note: 'BUILT AND VERIFIED means the item exists, matches this specification, and its check was run in this session (system checks, negative tests, database proofs or scheduled-job records). NOT VERIFIED HERE means the code exists but this sandbox cannot run its check (GitHub Actions, a device, an external provider). EXCEPTION carries the exact next step.',
     exceptions: [
-      'Live SMS/WhatsApp delivery: the provider-neutral stub records messages; no provider credentials are configured. Next step: set SMS_PROVIDER and implement sendMessage against the provider.',
+      'Live SMS/WhatsApp delivery: the provider-neutral stub records messages and production refuses to issue a code without a real provider. Next step: set SMS_PROVIDER and implement sendMessage against the chosen provider, then re-run the OTP proof.',
       'Alogsys core ledger: LedgerAdapter is the mock adapter. Next step: implement the Alogsys adapter and run a reconciliation drill.',
       'Flutter client under app/: not compiled here (no Flutter SDK). The web client is the running product.',
-      'GitHub Actions pipeline: runs on GitHub, not in this sandbox.',
-      'End-to-end acceptance journey (P10-10): not scripted yet.',
+      'GitHub Actions pipeline: .github/workflows/verify.yml exists but has not been executed here (it runs on GitHub). Next step: push and confirm the first green run.',
+      'End-to-end acceptance journey (P10-10): the 11-step journey has no script. Next step: write and run server/scripts/acceptance.mjs.',
+      'Shared Base44 environment: the Node stack is queued for validation; until it publishes, a recreated sandbox may still start the old Go stack.',
     ],
   };
 }

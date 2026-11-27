@@ -153,6 +153,11 @@ router.post('/admin/purge-demo', asyncHandler(async (req, res) => {
   await guardOtp(req, 'purge');
   if (req.body.confirm !== 'PURGE DEMO DATA') throw badRequest('Type PURGE DEMO DATA to confirm.');
   const result = await tx(async (client) => {
+    // The purge deletes across every tenant table by explicit demo id. Running
+    // it under the system switch keeps row-level security from hiding the rows
+    // as the caller's own role/membership rows are removed mid-purge; the
+    // is_demo / demo-id filters below are what limit it to demo data.
+    await client.query("SELECT set_config('app.system', 'on', true)");
     // Allows the payment-immutability trigger to remove demo rows only.
     await client.query("SELECT set_config('app.demo_purge', 'on', true)");
     const counts = await purgeDemoData(client);

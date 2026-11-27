@@ -23,6 +23,8 @@ export async function purgeDemoData(client) {
   await del('exceptions', 'DELETE FROM finance_exceptions WHERE entity_id IN (SELECT id::text FROM group_submissions WHERE group_id = ANY($1::uuid[])) OR owner_user_id = ANY($2::uuid[])', [g, u]);
   await del('allocations', 'DELETE FROM allocations WHERE receipt_id IN (SELECT id FROM receipts WHERE group_id = ANY($1::uuid[])) OR submission_id IN (SELECT id FROM group_submissions WHERE group_id = ANY($1::uuid[]))', [g]);
   await del('corrections', 'DELETE FROM corrections WHERE entity_id IN (SELECT id FROM payment_entries WHERE group_id = ANY($1::uuid[])) OR requested_by = ANY($2::uuid[])', [g, u]);
+  // Cash reconciliations reference a receipt, so they must go before it.
+  await del('cashReconciliations', 'DELETE FROM cash_reconciliations WHERE group_id = ANY($1::uuid[]) OR handover_by = ANY($2::uuid[]) OR received_by = ANY($2::uuid[]) OR deposited_by = ANY($3::uuid[])', [g, u, u]);
   await del('receipts', 'DELETE FROM receipts WHERE group_id = ANY($1::uuid[]) OR recorded_by = ANY($2::uuid[])', [g, u]);
   await del('paymentEntries', 'DELETE FROM payment_entries WHERE group_id = ANY($1::uuid[]) OR member_person_id = ANY($2::uuid[])', [g, p]);
   await del('submissions', 'DELETE FROM group_submissions WHERE group_id = ANY($1::uuid[])', [g]);
@@ -37,6 +39,8 @@ export async function purgeDemoData(client) {
   await del('guarantors', 'DELETE FROM guarantors WHERE loan_id IN (SELECT id FROM loan_applications WHERE group_id = ANY($1::uuid[]))', [g]);
   await del('disbursements', 'DELETE FROM disbursements WHERE loan_id IN (SELECT id FROM loan_applications WHERE group_id = ANY($1::uuid[]))', [g]);
   await del('loans', 'DELETE FROM loan_applications WHERE group_id = ANY($1::uuid[])', [g]);
+  // Internal member-to-member loans reference members, so they go before persons.
+  await del('memberLoans', 'DELETE FROM member_loans WHERE group_id = ANY($1::uuid[]) OR lender_person_id = ANY($2::uuid[]) OR borrower_person_id = ANY($2::uuid[]) OR witness_person_id = ANY($2::uuid[]) OR recorded_by = ANY($3::uuid[])', [g, p, u]);
   await del('disputes', 'DELETE FROM disputes WHERE group_id = ANY($1::uuid[]) OR person_id = ANY($2::uuid[]) OR raised_by_user_id = ANY($3::uuid[])', [g, p, u]);
   await del('comments', 'DELETE FROM comments WHERE group_id = ANY($1::uuid[]) OR author_user_id = ANY($2::uuid[])', [g, u]);
   await del('learningProgress', 'DELETE FROM learning_progress WHERE person_id = ANY($1::uuid[])', [p]);

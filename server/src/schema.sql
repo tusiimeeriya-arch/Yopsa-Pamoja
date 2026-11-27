@@ -1,4 +1,7 @@
 -- Yopsa Pamoja schema. Whole-UGX BIGINT money, timestamptz in UTC.
+-- Every object belongs to the public schema, whatever search_path the applying
+-- role carries by default.
+SET search_path = public;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS users (

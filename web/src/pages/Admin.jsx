@@ -16,6 +16,7 @@ const ROLES = ['member', 'secretary', 'treasurer', 'chairperson', 'field_officer
 function statusChip(s) {
   if (s === 'BUILT AND VERIFIED') return <span className="chip verified">BUILT AND VERIFIED</span>;
   if (s === 'EXCEPTION') return <span className="chip pending">EXCEPTION</span>;
+  if (s === 'NOT VERIFIED HERE') return <span className="chip pending">NOT VERIFIED HERE</span>;
   if (s === 'PARTIAL') return <span className="chip pending">PARTIAL</span>;
   if (s === 'BUILT BUT FAILING') return <span className="chip disputed">BUILT BUT FAILING</span>;
   return <span className="chip returned">NOT BUILT</span>;

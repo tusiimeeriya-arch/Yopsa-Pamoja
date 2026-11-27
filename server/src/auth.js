@@ -3,7 +3,8 @@ import { q } from './db.js';
 import { AppError, unauthorized, forbidden, locked, badRequest } from './errors.js';
 import { sha256, str } from './util.js';
 import { policy } from './config.js';
-import { sendMessage } from './notify.js';
+import { sendMessage, PROVIDER as MESSAGE_PROVIDER } from './notify.js';
+import { isProduction } from './env.js';
 
 const SCRYPT = { N: 16384, r: 8, p: 1 };
 const SESSION_COOKIE = 'pamoja_sid';
@@ -91,6 +92,12 @@ export async function login(email, password, req, res) {
   const r = await q('SELECT * FROM users WHERE lower(email)=$1', [e]);
   const user = r.rows[0];
   const generic = () => new AppError(401, 'INVALID_CREDENTIALS', 'Email or password is incorrect.');
+  // Demo accounts exist only to show the product. Production must never accept
+  // one, whatever its password is.
+  if (user && user.is_demo && isProduction()) {
+    await new Promise((s) => setTimeout(s, 250));
+    throw generic();
+  }
   if (!user || user.status !== 'active') { await new Promise((s) => setTimeout(s, 250)); throw generic(); }
   if (user.locked_until && new Date(user.locked_until) > new Date()) {
     throw locked('Too many attempts. Try again in a few minutes.');
@@ -132,6 +139,12 @@ export function requireStepUp(caller, minutes = 5) {
  */
 export async function requestOtp(caller, purpose) {
   const p = str(purpose, 'Purpose', { max: 40 });
+  // In production the code must reach the person through a real provider. The
+  // stub records messages instead of sending them, so production fails closed
+  // rather than handing a code to nobody (or to the API response).
+  if (isProduction() && MESSAGE_PROVIDER === 'stub') {
+    throw new AppError(503, 'OTP_DELIVERY_UNAVAILABLE', 'Confirmation codes cannot be delivered until an SMS provider is configured.');
+  }
   const recent = Number((await q(
     "SELECT COUNT(*) AS n FROM otp_codes WHERE user_id=$1 AND purpose=$2 AND created_at > now() - interval '15 minutes'",
     [caller.user.id, p],
@@ -153,17 +166,21 @@ export async function requestOtp(caller, purpose) {
     userId: caller.user.id,
   });
   // The stub cannot deliver a real SMS. Outside production the code is returned
-  // so the flow can be completed; in production configure a real provider.
+  // so the flow can be completed; in production it is never returned.
   return {
     purpose: p,
     delivery,
     expiresInMinutes: OTP_TTL_MINUTES,
-    devCode: process.env.NODE_ENV === 'production' ? undefined : code,
+    ...(isProduction() ? {} : { devCode: code }),
   };
 }
 
 export async function requireOtp(caller, purpose, code) {
   const p = str(purpose, 'Purpose', { max: 40 });
+  // No code yet is not a validation error: it is the prompt to ask for one.
+  if (code === undefined || code === null || String(code).trim() === '') {
+    throw new AppError(403, 'OTP_REQUIRED', 'Enter the one-time code sent to you to continue.');
+  }
   const supplied = str(code, 'One-time code', { min: 6, max: 6 });
   const row = (await q(
     "SELECT * FROM otp_codes WHERE user_id=$1 AND purpose=$2 AND consumed_at IS NULL ORDER BY created_at DESC LIMIT 1",
