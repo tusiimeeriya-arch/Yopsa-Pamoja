@@ -50,8 +50,10 @@ services:
     entrypoint: ["sh", "-ec"]
     command:
       - |
-        psql -v ON_ERROR_STOP=1 -f /workspace/backend/db/migrations/000001_baseline.up.sql
-        psql -v ON_ERROR_STOP=1 -f /workspace/backend/db/migrations/000002_p1_auth_rls.up.sql
+        for file in $$(ls /workspace/backend/db/migrations/*.up.sql | sort); do
+          echo "applying $$file"
+          psql -v ON_ERROR_STOP=1 -f "$$file"
+        done
         psql -v ON_ERROR_STOP=1 -c "ALTER ROLE pamoja_app PASSWORD '$$APP_DB_PASSWORD'"
     restart: "no"
 

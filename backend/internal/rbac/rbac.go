@@ -85,6 +85,7 @@ const (
 	ActionView             Action = "view"
 	ActionCreate           Action = "create"
 	ActionEditDraft        Action = "edit_draft"
+	ActionCheckIn          Action = "check_in"
 	ActionSubmit           Action = "submit"
 	ActionLock             Action = "lock"
 	ActionVerify           Action = "verify"
@@ -106,6 +107,7 @@ const (
 	ActionReviewOperations Action = "review_operations"
 	ActionAcceptOffer      Action = "accept_offer"
 	ActionClose            Action = "close"
+	ActionComplete         Action = "complete"
 	ActionRevoke           Action = "revoke"
 	ActionStepUp           Action = "step_up"
 )
@@ -607,6 +609,8 @@ func actionMeaning(a Action) string {
 		return "Create a draft record."
 	case ActionEditDraft:
 		return "Edit a record while it is still a draft."
+	case ActionCheckIn:
+		return "Record a member's attendance at an open register, self or assisted."
 	case ActionSubmit:
 		return "Submit a record for review; it becomes immutable except by correction."
 	case ActionLock:
