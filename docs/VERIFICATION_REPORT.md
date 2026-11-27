@@ -248,3 +248,156 @@ by the `cash_three_steps` system check above.
 - GitHub Actions pipeline — written, runs on GitHub, not executed in this sandbox.
 - SMS/WhatsApp delivery — provider-neutral stub only.
 - Production deployment — out of scope for this branch.
+
+---
+
+## 8. Hardening pass (`security-hardening-pass`)
+
+Every block below is output copied from a run against the compose stack on this
+branch. Counts are from the final run of each suite.
+
+### 8.1 `app_system()`
+
+`server/src/db.js` is the only place that sets it:
+
+```
+await client.query("SELECT set_config('app.system', 'on', true)");   // systemTx only
+```
+
+`systemTx()` is called by the scheduler (`server/src/scheduler.js`). No route
+passes request input to `set_config`; the only other caller is the self-test,
+which flips the switch inside a transaction it then rolls back. The `true`
+makes the setting transaction-local, so it cannot outlive that transaction.
+In-app check and negative test:
+
+```
+PASS  app_system_gate    request=false app.system='' systemTx=true afterTx=false
+PASS  app_system cannot be enabled over HTTP
+      plain: 404 NOT_FOUND | query: 404 NOT_FOUND | header: 404 NOT_FOUND |
+      after payload: 404 NOT_FOUND | fresh app session app_system(): false
+```
+
+### 8.2 Cash steps and roles
+
+| Step | Allowed roles after this pass |
+| --- | --- |
+| Handover | group treasurer, or an assigned field officer (group/branch scope) |
+| Branch receipt | verifier only (**management removed — read-only**) |
+| Deposit confirmation | verifier only (**management removed — read-only**) |
+
+The database trigger `cash_reconciliation_guard` still requires three distinct
+users in order.
+
+```
+PASS  cash_three_steps          final reconciled; same-person steps rejected
+PASS  cash_readonly_management  Management receiving cash rejected: FORBIDDEN;
+                                Management confirming a deposit rejected: FORBIDDEN
+```
+
+### 8.3 Hard deletes
+
+`record_no_hard_delete` (BEFORE DELETE on `users`, `persons`, `groups`,
+`memberships`, `role_assignments`) raises `42501` unless the row is tagged
+`is_demo`, so the demo purge and the self-tests still clean up.
+
+```
+PASS  hard_delete_guard  refused={"person":true,"membership":true,"group":true,
+                         "role":true,"user":true} endDated=ended auditRowsForRecord=1
+PASS  No hard-delete route for protected records
+      group: 404 | person: 404 | role: 404 | user: 404 | group still present: 1
+```
+
+The audit row written for the person is still readable after the refused delete
+(`auditRowsForRecord=1`), and the allowed alternative (end-dating the membership)
+succeeds in the same transaction.
+
+### 8.4 Raw security evidence
+
+Password hashing (`server/src/auth.js`): scrypt, N=16384, r=8, p=1, 16-byte
+salt, 64-byte derived key. A stored value:
+
+```
+scrypt$16384$8$1|130        (prefix | total length; salt and hash not printed)
+```
+
+Session cookie (login with `X-Forwarded-Proto: https`):
+
+```
+Set-Cookie: pamoja_sid=…; Max-Age=43200; Path=/; Expires=…; HttpOnly; Secure; SameSite=Lax
+```
+
+12-hour session; the database row also expires (`sessions.expires_at`).
+
+CSRF (POST without the client header):
+
+```
+{"error":{"code":"CSRF_BLOCKED","message":"Request rejected."}} [403]
+```
+
+Response headers:
+
+```
+X-Content-Type-Options: nosniff
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: geolocation=(), camera=(), microphone=()
+Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'
+  'unsafe-inline'; script-src 'self'; connect-src 'self';
+  frame-ancestors 'self' https://*.base44.com https://*.base44.app
+```
+
+HSTS is sent only over TLS (or in production); on a plain-HTTP sandbox it would
+pin the browser to https for localhost.
+
+CORS: the API is same-origin (the web app proxies `/api`), so no
+`Access-Control-Allow-*` header is returned for a foreign `Origin`:
+
+```
+no Access-Control-Allow-* header returned
+```
+
+Uploads: `ALLOWED = ['image/png','image/jpeg','image/webp','application/pdf']`,
+`MAX = 5 * 1024 * 1024`, JSON body `10mb`; magic-byte check `CHK:upload_content`.
+
+`npm audit --audit-level=high`:
+
+```
+server: found 0 vulnerabilities
+web:    2 moderate severity vulnerabilities (react-router-dom 6.0.0-alpha.0 - 7.17.0)
+```
+
+No high or critical findings; the two moderate findings need a breaking router
+upgrade and are left for a separate change.
+
+gitleaks (`zricethezav/gitleaks:latest detect --source=/repo --no-git --redact`):
+
+```
+no leaks found
+```
+
+### 8.5 Counts
+
+```
+IN-APP SYSTEM CHECKS: 33 passed, 0 failed, 33 total   (25 original + 8 added)
+NEGATIVE TESTS:       12 passed, 0 failed             (9 original + 3 added)
+TEST DATA SAFETY:     demo_groups 5 -> 5, demo_payment_entries 19 -> 19,
+                      demo_receipts 4 -> 4, demo_loans 14 -> 14,
+                      demo_roles 13 -> 13, audit_rows 50 -> 56
+Build Progress:       60 BUILT AND VERIFIED, 88 NOT VERIFIED HERE, 1 EXCEPTION
+                      (before this pass: 40 / 108 / 1)
+```
+
+New automated checks: `app_system_gate`, `hard_delete_guard`,
+`cash_readonly_management`, `attendance_integrity`, `payment_controls`,
+`correction_separation`, `loan_controls`, `dashboard_totals`. New negative
+tests: `app_system cannot be enabled over HTTP`, `No hard-delete route for
+protected records`, `Registration review separation`. They run inside the same
+two scripts that `.github/workflows/verify.yml` already executes, and each script
+now fails if its count drops below 33 / 12.
+
+### 8.6 Still not verified here
+
+- UI-only items (registration, attendance, payment, loan and dashboard screens)
+  have exact scripts in `docs/MANUAL_TESTS.md`; they are not browser-tested.
+- GitHub Actions has not been executed in this sandbox.
+- Two moderate `react-router-dom` advisories remain in the web client.

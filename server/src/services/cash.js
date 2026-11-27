@@ -48,7 +48,8 @@ export async function handOverCash(caller, receiptId, input = {}) {
 export async function receiveCash(caller, receiptId) {
   return tx(async (client) => {
     const { receipt, group } = await loadReceipt(client, receiptId);
-    requireRole(caller, ['verifier', 'management'], { groupId: group.id, branchId: group.branch_id });
+    // Management is read-only: it may watch the reconciliation, never perform it.
+    requireRole(caller, ['verifier'], { groupId: group.id, branchId: group.branch_id });
     const row = await ensureRow(client, receipt);
     if (!row.handover_by) throw badRequest('Cash must be handed over before it can be received.');
     if (row.received_by) throw badRequest('This cash has already been received.');
@@ -69,7 +70,8 @@ export async function receiveCash(caller, receiptId) {
 export async function confirmDeposit(caller, receiptId, input) {
   return tx(async (client) => {
     const { receipt, group } = await loadReceipt(client, receiptId);
-    requireRole(caller, ['verifier', 'management'], { groupId: group.id, branchId: group.branch_id });
+    // Management is read-only: it may watch the reconciliation, never perform it.
+    requireRole(caller, ['verifier'], { groupId: group.id, branchId: group.branch_id });
     const row = await ensureRow(client, receipt);
     if (!row.received_by) throw badRequest('Cash must be received by the branch before the deposit is confirmed.');
     if (row.deposited_by) throw badRequest('This deposit has already been confirmed.');

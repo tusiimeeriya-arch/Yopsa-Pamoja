@@ -34,6 +34,12 @@ async function main() {
   for (const r of body.results) console.log(`${r.status.padEnd(4)}  ${r.id.padEnd(width)}  ${r.name}  —  ${r.detail}`);
   console.log('='.repeat(100));
   console.log(`${body.passed} passed, ${body.failed} failed, ${body.total} total (tag ${body.tag})`);
+  // CI floor: a check may be added, but silently removing one must fail the run.
+  const MIN = Number(process.env.MIN_SYSTEM_CHECKS || 33);
+  if (body.total < MIN) {
+    console.error(`expected at least ${MIN} system checks, got ${body.total}`);
+    process.exit(1);
+  }
   process.exit(body.failed ? 1 : 0);
 }
 

@@ -1,20 +1,30 @@
 import crypto from 'node:crypto';
-import { q, tx } from '../db.js';
+import { q, tx, systemTx } from '../db.js';
+import { policy } from '../config.js';
 import { hashPassword } from '../auth.js';
-import { verifyAuditChain } from '../audit.js';
+import { verifyAuditChain, writeAudit } from '../audit.js';
 import { loadGroup } from '../authz.js';
 import { addDays, today } from '../util.js';
 import { attendanceSummary } from './attendance.js';
-import { recordPaymentEntry, verifySubmission, allocateReceipt, recordReceipt, postToLedger } from './payments.js';
-import { recordDisbursement } from './loans.js';
+import { membershipAt } from './common.js';
+import {
+  recordPaymentEntry, verifySubmission, allocateReceipt, recordReceipt, postToLedger, submitGroup,
+  requestCorrection, approveCorrection,
+} from './payments.js';
+import { recordDisbursement, createLoanApplication, changeLoanMaterial, transitionLoan } from './loans.js';
 import { handOverCash, receiveCash, confirmDeposit } from './cash.js';
 import { createMemberLoan } from './memberLoans.js';
 import { decodeBase64 } from '../files.js';
 import { LedgerAdapter } from '../ledger.js';
+import { dashboardData } from './dashboard.js';
+import { computeRanking } from './ranking.js';
 
-const TAG = 'SELFTEST-' + Date.now();
 const pass = (id, name, detail) => ({ id, name, status: 'PASS', detail });
 const fail = (id, name, detail) => ({ id, name, status: 'FAIL', detail });
+// One check failing must never hide the verdict of the checks after it.
+const safe = async (id, name, fn) => {
+  try { return await fn(); } catch (err) { return fail(id, name, String(err.message)); }
+};
 
 function callerFor(user, role, scopeType, scopeId) {
   return { user, sessionId: 'selftest', stepUpAt: new Date(), roleUsed: role, assignments: [{ role, scope_type: scopeType, scope_id: scopeId, effective_from: '2000-01-01', effective_to: null }] };
@@ -26,6 +36,9 @@ async function expectReject(fn, label) {
 }
 
 export async function runSystemChecks(actor) {
+  // Per run, not per process: two runs in one API process must not collide on
+  // the same fixture e-mail addresses.
+  const TAG = 'SELFTEST-' + Date.now();
   const results = [];
   const ids = { users: [], persons: [], memberships: [], meetings: [], submissions: [], receipts: [], entries: [], loans: [], branches: [], groups: [] };
   const cleanupErrors = [];
@@ -33,14 +46,16 @@ export async function runSystemChecks(actor) {
   try {
     const pwd = hashPassword(crypto.randomBytes(18).toString('hex'));
     const mkUser = async (label) => {
-      const r = await q('INSERT INTO users (email, password_hash, full_name) VALUES ($1,$2,$3) RETURNING id, email, full_name',
+      const r = await q('INSERT INTO users (email, password_hash, full_name, is_demo) VALUES ($1,$2,$3,true) RETURNING id, email, full_name',
         [`${TAG.toLowerCase()}-${label}@selftest.invalid`, pwd, `Self-test ${label}`]);
       ids.users.push(r.rows[0].id);
       return r.rows[0];
     };
     const treasurer = await mkUser('treasurer');
     const verifier = await mkUser('verifier');
+    const verifier2 = await mkUser('verifier2');
     const officer = await mkUser('officer');
+    const chair = await mkUser('chair');
     const approver = await mkUser('approver');
     const itadmin = await mkUser('itadmin');
     const manager = await mkUser('manager');
@@ -51,21 +66,21 @@ export async function runSystemChecks(actor) {
     const branchB = (await q('INSERT INTO org_branches (name, district, code) VALUES ($1,$2,$3) RETURNING *', [`Self-test Branch B ${TAG}`, 'Test', TAG + '-B'])).rows[0];
     ids.branches.push(branchA.id, branchB.id);
     const hiddenGroup = (await q(
-      `INSERT INTO groups (name, type, branch_id, status, created_by) VALUES ($1,'VSLA',$2,'Draft',$3) RETURNING *`,
+      `INSERT INTO groups (name, type, branch_id, status, created_by, is_demo) VALUES ($1,'VSLA',$2,'Draft',$3,true) RETURNING *`,
       [`Self-test Hidden Group ${TAG}`, branchA.id, officer.id],
     )).rows[0];
     ids.groups.push(hiddenGroup.id);
     const group = (await q(
-      `INSERT INTO groups (name, type, branch_id, status, created_by, registration_evidence_status, review_decision)
-       VALUES ($1,'VSLA',$2,'Active',$3,'Provided','approve') RETURNING *`,
+      `INSERT INTO groups (name, type, branch_id, status, created_by, registration_evidence_status, review_decision, is_demo)
+       VALUES ($1,'VSLA',$2,'Active',$3,'Provided','approve',true) RETURNING *`,
       [`Self-test Group ${TAG}`, branchA.id, officer.id],
     )).rows[0];
     ids.groups.push(group.id);
     const actorId = actor?.user?.id || officer.id;
     const mkPerson = async (name, join) => {
-      const p = (await q('INSERT INTO persons (full_name, phone, consent_recorded, consent_at, created_by) VALUES ($1,$2,true,now(),$3) RETURNING *', [name, '+2567' + Math.floor(10000000 + Math.random() * 89999999), actorId])).rows[0];
+      const p = (await q('INSERT INTO persons (full_name, phone, consent_recorded, consent_at, created_by, is_demo) VALUES ($1,$2,true,now(),$3,true) RETURNING *', [name, '+2567' + Math.floor(10000000 + Math.random() * 89999999), actorId])).rows[0];
       ids.persons.push(p.id);
-      const m = (await q("INSERT INTO memberships (person_id, group_id, join_date, status, created_by) VALUES ($1,$2,$3,'active',$4) RETURNING *", [p.id, group.id, join, officer.id])).rows[0];
+      const m = (await q("INSERT INTO memberships (person_id, group_id, join_date, status, created_by, is_demo) VALUES ($1,$2,$3,'active',$4,true) RETURNING *", [p.id, group.id, join, officer.id])).rows[0];
       ids.memberships.push(m.id);
       return p;
     };
@@ -286,15 +301,22 @@ export async function runSystemChecks(actor) {
     ids.receipts.push(cashReceipt.id);
     const dualCaller = callerFor(dual, 'verifier', 'Org', 'org');
     dualCaller.assignments.push({ role: 'treasurer', scope_type: 'Group', scope_id: group.id, effective_from: '2000-01-01', effective_to: null });
+    const mgrCaller = callerFor(manager, 'management', 'Org', 'org');
+    // Management is read-only: it may watch a cash reconciliation, never perform a step.
+    const mgrReceive = await expectReject(() => receiveCash(mgrCaller, cashReceipt.id), 'Management receiving cash');
+    const mgrDeposit = await expectReject(() => confirmDeposit(mgrCaller, cashReceipt.id, { bankRef: 'SELFTEST-BANK' }), 'Management confirming a deposit');
     const hand = await handOverCash(dualCaller, cashReceipt.id, {});
     const sameReceive = await expectReject(() => receiveCash(dualCaller, cashReceipt.id), 'Handing over and receiving the same cash');
     const recv = await receiveCash(vcaller, cashReceipt.id);
     const sameDeposit = await expectReject(() => confirmDeposit(vcaller, cashReceipt.id, { bankRef: 'SELFTEST-BANK' }), 'Receiving and depositing the same cash');
-    const mgrCaller = callerFor(manager, 'management', 'Org', 'org');
-    const dep = await confirmDeposit(mgrCaller, cashReceipt.id, { bankRef: 'SELFTEST-BANK', evidenceRef: 'self-test slip' });
+    const v2caller = callerFor(verifier2, 'verifier', 'Group', group.id);
+    const dep = await confirmDeposit(v2caller, cashReceipt.id, { bankRef: 'SELFTEST-BANK', evidenceRef: 'self-test slip' });
     results.push(hand.reconciliation && sameReceive.rejected && recv.reconciliation && sameDeposit.rejected && dep.reconciliation?.status === 'reconciled'
       ? pass('cash_three_steps', 'Cash: handover, branch receipt and deposit are three steps by three people', `final ${dep.reconciliation.status}; same-person steps rejected`)
       : fail('cash_three_steps', 'Cash: handover, receipt and deposit by three people', `hand=${!!hand.reconciliation} sameReceive=${sameReceive.rejected} recv=${!!recv.reconciliation} sameDeposit=${sameDeposit.rejected} final=${dep.reconciliation?.status}`));
+    results.push(mgrReceive.rejected && mgrDeposit.rejected
+      ? pass('cash_readonly_management', 'Management cannot perform a cash step (read-only role)', `${mgrReceive.detail}; ${mgrDeposit.detail}`)
+      : fail('cash_readonly_management', 'Management cannot perform a cash step', `receive=${mgrReceive.detail} deposit=${mgrDeposit.detail}`));
 
     // Internal member loans never enter Yopsa loan totals
     const loansBefore = Number((await q(
@@ -325,6 +347,209 @@ export async function runSystemChecks(actor) {
       ? pass('upload_content', 'Upload content must match its declared type', badUpload.detail)
       : fail('upload_content', 'Upload content must match its declared type', `badRejected=${badUpload.rejected} goodAccepted=${goodUpload}`));
 
+    // app_system() is the scheduler's transaction-local switch. An ordinary
+    // request runs with it off, and it does not survive the transaction.
+    results.push(await safe('app_system_gate', 'app_system() is off for requests and only the scheduler sets it', async () => {
+      const inRequest = (await q('SELECT app_system() AS on')).rows[0].on;
+      const raw = (await q("SELECT COALESCE(current_setting('app.system', true), '') AS v")).rows[0].v;
+      let inSystem = null;
+      try {
+        await systemTx(async (client) => {
+          inSystem = (await client.query('SELECT app_system() AS on')).rows[0].on;
+          throw new Error('rollback self-test');
+        });
+      } catch { /* expected: the transaction is rolled back */ }
+      const after = (await q('SELECT app_system() AS on')).rows[0].on;
+      const detail = `request=${inRequest} app.system='${raw}' systemTx=${inSystem} afterTx=${after}`;
+      return inRequest === false && raw === '' && inSystem === true && after === false
+        ? pass('app_system_gate', 'app_system() is off for requests and only the scheduler sets it', detail)
+        : fail('app_system_gate', 'app_system() is off for requests and only the scheduler sets it', detail);
+    }));
+
+    // Real records are never hard-deleted; the audit row that names one must
+    // still resolve after a refused delete.
+    results.push(await safe('hard_delete_guard', 'Users, persons, groups, memberships and role assignments cannot be hard-deleted', async () => {
+      let out = null;
+      try {
+        await tx(async (client) => {
+          // Non-demo fixtures: these are exactly the rows the guard must
+          // refuse. The whole transaction is rolled back, so nothing persists.
+          // created_by is the acting admin so the row stays visible to the
+          // caller for INSERT ... RETURNING under the persons SELECT policy.
+          const dg = (await client.query("INSERT INTO groups (name, type, branch_id, status, created_by) VALUES ($1,'VSLA',$2,'Draft',$3) RETURNING id", [`Delete guard group ${TAG}`, branchA.id, actorId])).rows[0];
+          const p = (await client.query("INSERT INTO persons (full_name, consent_recorded, consent_at, created_by) VALUES ($1,true,now(),$2) RETURNING id", [`Delete guard ${TAG}`, actorId])).rows[0];
+          const m = (await client.query("INSERT INTO memberships (person_id, group_id, join_date, status, created_by) VALUES ($1,$2,$3,'active',$4) RETURNING id", [p.id, dg.id, today(), actorId])).rows[0];
+          const ra = (await client.query("INSERT INTO role_assignments (user_id, role, scope_type, scope_id, status, granted_by, approved_by) VALUES ($1,'auditor','Org','org','active',$2,$2) RETURNING id", [officer.id, officer.id])).rows[0];
+          const u = (await client.query("INSERT INTO users (email, password_hash, full_name) VALUES ($1,$2,$3) RETURNING id", [`${TAG.toLowerCase()}-del@selftest.invalid`, pwd, 'Delete guard'])).rows[0];
+          await writeAudit(client, { user: { id: officer.id }, roleUsed: 'field_officer' }, {
+            action: 'selftest.delete_guard', entity: 'Person', entityId: p.id, after: { tag: TAG }, scopeType: 'Group', scopeId: group.id,
+          });
+          const attempts = {};
+          for (const [name, sql, id] of [
+            ['person', 'DELETE FROM persons WHERE id=$1', p.id],
+            ['membership', 'DELETE FROM memberships WHERE id=$1', m.id],
+            ['group', 'DELETE FROM groups WHERE id=$1', dg.id],
+            ['role', 'DELETE FROM role_assignments WHERE id=$1', ra.id],
+            ['user', 'DELETE FROM users WHERE id=$1', u.id],
+          ]) {
+            try {
+              await client.query('SAVEPOINT d');
+              await client.query(sql, [id]);
+              await client.query('RELEASE SAVEPOINT d');
+              attempts[name] = false;
+            } catch (err) {
+              attempts[name] = err.code === '42501';
+              await client.query('ROLLBACK TO SAVEPOINT d');
+            }
+          }
+          // The allowed alternative: end-date the membership instead.
+          await client.query("UPDATE memberships SET status='ended', leave_date=current_date WHERE id=$1", [m.id]);
+          const ended = (await client.query('SELECT status, leave_date FROM memberships WHERE id=$1', [m.id])).rows[0];
+          const auditKept = (await client.query('SELECT count(*)::int AS n FROM audit_logs WHERE entity_id=$1', [p.id])).rows[0].n;
+          const rollback = new Error('rollback hard delete self-test');
+          rollback.selfTest = { attempts, ended, auditKept };
+          throw rollback;
+        });
+      } catch (err) { out = err.selfTest || { error: err.message }; }
+      if (!out || !out.attempts) return fail('hard_delete_guard', 'Hard deletes are refused', `fixture transaction failed: ${out?.error || 'unknown'}`);
+      const allRefused = ['person', 'membership', 'group', 'role', 'user'].every((k) => out.attempts[k] === true);
+      const detail = `refused=${JSON.stringify(out.attempts)} endDated=${out.ended?.status} auditRowsForRecord=${out.auditKept}`;
+      return allRefused && out.ended?.status === 'ended' && out.auditKept >= 1
+        ? pass('hard_delete_guard', 'Users, persons, groups, memberships and role assignments cannot be hard-deleted', detail)
+        : fail('hard_delete_guard', 'Users, persons, groups, memberships and role assignments cannot be hard-deleted', detail);
+    }));
+
+    // Attendance: one record per person per meeting, membership required on the
+    // meeting date, cancelled meetings never count.
+    results.push(await safe('attendance_integrity', 'One record per person per meeting, membership required, cancelled excluded', async () => {
+      const dup = await expectReject(() => q(
+        "INSERT INTO attendance_records (meeting_id, person_id, status, method, recorded_by) VALUES ($1,$2,'present','self',$3)",
+        [meetingIds[0], personA.id, officer.id],
+      ), 'A second check-in for the same meeting');
+      const nonMember = await membershipAt(personC.id, hiddenGroup.id, today());
+      const cancelled = (await q(
+        "INSERT INTO meetings (group_id, title, scheduled_for, status, created_by, is_demo) VALUES ($1,$2,$3,'cancelled',$4,true) RETURNING id",
+        [group.id, `Cancelled self-test ${TAG}`, addDays(today(), -100) + 'T10:00:00Z', officer.id],
+      )).rows[0];
+      ids.meetings.push(cancelled.id);
+      await q("INSERT INTO attendance_records (meeting_id, person_id, status, method, recorded_by) VALUES ($1,$2,'present','self',$3)", [cancelled.id, personA.id, officer.id]);
+      const after = (await attendanceSummary(group.id)).people.find((p) => p.personId === personA.id);
+      const detail = `duplicate=${dup.detail} nonMember=${nonMember ? 'found' : 'null'} expectedAfterCancelled=${after.expected}`;
+      return dup.rejected && nonMember === null && after.expected === 8
+        ? pass('attendance_integrity', 'One record per person per meeting, membership required, cancelled excluded', detail)
+        : fail('attendance_integrity', 'One record per person per meeting, membership required, cancelled excluded', detail);
+    }));
+
+    // Payments: submission locks the drafts and totals stay per category, a
+    // receipt source reference is unique, evidence is mandatory.
+    const controls = await safe('payment_controls', 'Submission locks drafts with per-category totals; receipts need a unique reference and evidence', async () => {
+      const tcaller = callerFor(treasurer, 'treasurer', 'Group', group.id);
+      const day = addDays(today(), -3);
+      const a1 = await recordPaymentEntry(tcaller, { groupId: group.id, memberPersonId: personA.id, category: 'savings', amount: 10000, collectionDate: day, idempotencyKey: TAG + '-pc1' });
+      const a2 = await recordPaymentEntry(tcaller, { groupId: group.id, memberPersonId: personA.id, category: 'fines', amount: 5000, collectionDate: day, idempotencyKey: TAG + '-pc2' });
+      const subR = await submitGroup(tcaller, { groupId: group.id, periodStart: day, periodEnd: day, idempotencyKey: TAG + '-pcsub' });
+      ids.submissions.push(subR.submission.id);
+      const locked = (await q('SELECT status FROM payment_entries WHERE id = ANY($1::uuid[])', [[a1.entry.id, a2.entry.id]])).rows.every((r) => r.status === 'locked');
+      const totals = subR.submission.totals || {};
+      const totalsOk = totals.savings === 10000 && totals.fines === 5000 && Number(subR.submission.total_amount) === 15000;
+      const resub = await expectReject(() => submitGroup(tcaller, { groupId: group.id, periodStart: day, periodEnd: day, idempotencyKey: TAG + '-pcsub2' }), 'Submitting the same drafts twice');
+      const vc = callerFor(verifier, 'verifier', 'Group', group.id);
+      const rcpt = await recordReceipt(vc, { groupId: group.id, amount: 5000, receiptDate: today(), sourceRef: TAG + '-SRC', destination: 'Bank', channel: 'bank', evidenceRef: 'proof', idempotencyKey: TAG + '-rc1' });
+      ids.receipts.push(rcpt.receipt.id);
+      const dupRcpt = await expectReject(() => recordReceipt(vc, { groupId: group.id, amount: 5000, receiptDate: today(), sourceRef: TAG + '-SRC', destination: 'Bank', channel: 'bank', evidenceRef: 'proof', idempotencyKey: TAG + '-rc2' }), 'A duplicate receipt source reference');
+      const noEvidence = await expectReject(() => recordReceipt(vc, { groupId: group.id, amount: 5000, receiptDate: today(), sourceRef: TAG + '-SRC2', destination: 'Bank', channel: 'bank', idempotencyKey: TAG + '-rc3' }), 'A receipt without evidence');
+      const detail = `locked=${locked} totals=${JSON.stringify(totals)} resubmit=${resub.rejected} duplicateRef=${dupRcpt.rejected} noEvidence=${noEvidence.rejected}`;
+      return { result: locked && totalsOk && resub.rejected && dupRcpt.rejected && noEvidence.rejected
+        ? pass('payment_controls', 'Submission locks drafts with per-category totals; receipts need a unique reference and evidence', detail)
+        : fail('payment_controls', 'Submission locks drafts with per-category totals; receipts need a unique reference and evidence', detail), entryId: a1.entry.id };
+    });
+    results.push(controls.result || controls);
+
+    // A correction needs a different approver, and the locked entry changes only
+    // through that approved correction.
+    results.push(await safe('correction_separation', 'A correction needs a different approver and only then changes the entry', async () => {
+      const entryId = controls.entryId;
+      if (!entryId) return fail('correction_separation', 'A correction needs a different approver', 'no locked entry from the payment check');
+      const vc = callerFor(verifier, 'verifier', 'Group', group.id);
+      const v2 = callerFor(verifier2, 'verifier', 'Group', group.id);
+      const corr = await requestCorrection(vc, { entryId, field: 'amount', newValue: '12000', reason: 'Member receipt corrected after recount', idempotencyKey: TAG + '-corr' });
+      const selfApprove = await expectReject(() => approveCorrection(vc, { correctionId: corr.correction.id }), 'Approving your own correction');
+      const approved = await approveCorrection(v2, { correctionId: corr.correction.id });
+      const after = Number((await q('SELECT amount FROM payment_entries WHERE id=$1', [entryId])).rows[0].amount);
+      const detail = `selfApprove=${selfApprove.rejected} status=${approved.correction?.status} amount=${after}`;
+      return selfApprove.rejected && approved.correction?.status === 'approved' && after === 12000
+        ? pass('correction_separation', 'A correction needs a different approver and only then changes the entry', detail)
+        : fail('correction_separation', 'A correction needs a different approver and only then changes the entry', detail);
+    }));
+
+    // Loans: only a leader may apply, product limits apply, a guarantor is
+    // required above the threshold, and a material change forces re-approval.
+    results.push(await safe('loan_controls', 'Loan limits, guarantor threshold, authorised representative and re-approval', async () => {
+      const chairPerson = (await q(
+        'INSERT INTO persons (full_name, linked_user_id, consent_recorded, consent_at, created_by, is_demo) VALUES ($1,$2,true,now(),$3,true) RETURNING *',
+        [`Self-test Chair ${TAG}`, chair.id, actorId],
+      )).rows[0];
+      ids.persons.push(chairPerson.id);
+      const chairMembership = (await q(
+        "INSERT INTO memberships (person_id, group_id, join_date, status, created_by, is_demo) VALUES ($1,$2,$3,'active',$4,true) RETURNING id",
+        [chairPerson.id, group.id, addDays(today(), -200), officer.id],
+      )).rows[0];
+      ids.memberships.push(chairMembership.id);
+      await q(
+        "INSERT INTO leaderships (group_id, person_id, position, authority_scope, effective_from, created_by, is_demo) VALUES ($1,$2,'chairperson','group',$3,$4,true)",
+        [group.id, chairPerson.id, addDays(today(), -200), officer.id],
+      );
+      const chairCaller = callerFor(chair, 'chairperson', 'Group', group.id);
+      const tcaller = callerFor(treasurer, 'treasurer', 'Group', group.id);
+      const noAuthority = await expectReject(() => createLoanApplication(tcaller, {
+        groupId: group.id, amount: 400000, termMonths: 6, purpose: 'Self-test without authority', repaymentSource: 'Sales',
+      }), 'A treasurer who is not a leader applying for a loan');
+      const limits = (await policy('loans.product_limits'))[group.type];
+      const overLimit = await expectReject(() => createLoanApplication(chairCaller, {
+        groupId: group.id, amount: limits.max + 1, termMonths: 6, purpose: 'Self-test above the product limit', repaymentSource: 'Sales',
+      }), 'A loan above the configured product limit');
+      const threshold = Number(await policy('loans.guarantor_threshold_ugx'));
+      const bigLoan = (await q(
+        `INSERT INTO loan_applications (group_id, product, amount, purpose, term_months, repayment_source, status, created_by, authorised_person_id)
+         VALUES ($1,'group_loan',$2,'Self-test guarantor','6','Sales','OperationsReview',$3,$4) RETURNING *`,
+        [group.id, threshold + 100000, officer.id, chairPerson.id],
+      )).rows[0];
+      ids.loans.push(bigLoan.id);
+      await q("INSERT INTO approval_steps (loan_id, step, actor_user_id, decision) VALUES ($1,'operations_review',$2,'reviewed')", [bigLoan.id, verifier.id]);
+      const noGuarantor = await expectReject(() => transitionLoan(callerFor(approver, 'credit_approver', 'Org', 'org'), bigLoan.id, { action: 'approve' }), 'Approving above the threshold without a guarantor');
+      const approvedLoan = (await q(
+        `INSERT INTO loan_applications (group_id, product, amount, purpose, term_months, repayment_source, status, created_by, approved_by, approved_at, authorised_person_id)
+         VALUES ($1,'group_loan',400000,'Self-test material change','6','Sales','Approved',$2,$3,now(),$4) RETURNING *`,
+        [group.id, officer.id, approver.id, chairPerson.id],
+      )).rows[0];
+      ids.loans.push(approvedLoan.id);
+      const changed = await changeLoanMaterial(chairCaller, approvedLoan.id, { amount: 450000, reason: 'Members changed the approved amount' });
+      const detail = `noAuthority=${noAuthority.rejected} overLimit=${overLimit.rejected} noGuarantor=${noGuarantor.rejected} reapproval=${changed.status}/${changed.requiresReapproval}`;
+      return noAuthority.rejected && overLimit.rejected && noGuarantor.rejected && changed.status === 'OperationsReview' && changed.requiresReapproval === true
+        ? pass('loan_controls', 'Loan limits, guarantor threshold, authorised representative and re-approval', detail)
+        : fail('loan_controls', 'Loan limits, guarantor threshold, authorised representative and re-approval', detail);
+    }));
+
+    // Dashboard totals: distinct people, the three flows kept apart, and the
+    // 31-day group excluded while the 30-day group is not.
+    results.push(await safe('dashboard_totals', 'Dashboard totals reconcile and ranking excludes only more than 30 days', async () => {
+      const dash = await dashboardData(actor || {}, {});
+      const dbMembers = (await q("SELECT COUNT(*)::int AS rows, COUNT(DISTINCT m.person_id)::int AS people FROM memberships m WHERE m.status='active'")).rows[0];
+      const f = dash.cards.flows;
+      const rank = await computeRanking({ client: { query: q } });
+      const g31 = rank.groups.find((g) => g.groupName === 'Tukolere Wamu VSLA');
+      const g30 = rank.groups.find((g) => g.groupName === 'Nkumba Investment Club');
+      const peopleOk = dash.cards.members.people === dbMembers.people && dash.cards.members.memberships === dbMembers.rows;
+      const flowsOk = f.submitted.count >= f.verified.count && f.verified.count >= f.posted.count
+        && dash.cards.totalPayable.principal === dash.cards.outstandingPrincipal;
+      const overdueOk = g31?.excluded === true && g30?.excluded === false;
+      const topOk = dash.cards.topTen.length <= 10;
+      const detail = `people=${dash.cards.members.people}/${dbMembers.people} memberships=${dash.cards.members.memberships}/${dbMembers.rows} flows=${f.submitted.count}/${f.verified.count}/${f.posted.count} top=${dash.cards.topTen.length} 31d=${g31?.metrics.maxOverdue}:${g31?.excluded} 30d=${g30?.metrics.maxOverdue}:${g30?.excluded}`;
+      return peopleOk && flowsOk && overdueOk && topOk
+        ? pass('dashboard_totals', 'Dashboard totals reconcile and ranking excludes only more than 30 days', detail)
+        : fail('dashboard_totals', 'Dashboard totals reconcile and ranking excludes only more than 30 days', detail);
+    }));
+
     // Audit chain
     const chain = await verifyAuditChain({ query: q });
     results.push(chain.ok ? pass('audit_chain', 'Audit hash chain integrity', `${chain.entries} entries verified`) : fail('audit_chain', 'Audit hash chain integrity', `Break at seq ${chain.firstBreakAt}`));
@@ -341,7 +566,16 @@ export async function runSystemChecks(actor) {
         await q('DELETE FROM member_loans WHERE group_id=$1', [g]);
         await q('DELETE FROM receipts WHERE group_id=$1', [g]);
         await q('DELETE FROM corrections WHERE entity_id IN (SELECT id FROM payment_entries WHERE group_id=$1)', [g]);
-        await q('DELETE FROM payment_entries WHERE group_id=$1', [g]);
+        // A locked entry is immutable by design. These are demo-tagged test
+        // rows, so cleanup uses the same audited-purge escape the demo purge
+        // uses (app.demo_purge) instead of loosening the entry guard.
+        await tx(async (client) => {
+          await client.query("SELECT set_config('app.demo_purge','on',true)");
+          // These are this run's own test rows, so tag them as such before
+          // using the demo-purge escape; the entry guard is unchanged.
+          await client.query('UPDATE payment_entries SET is_demo=true WHERE group_id=$1', [g]);
+          await client.query('DELETE FROM payment_entries WHERE group_id=$1', [g]);
+        });
         await q('DELETE FROM group_submissions WHERE group_id=$1', [g]);
         await q('DELETE FROM attendance_records WHERE meeting_id IN (SELECT id FROM meetings WHERE group_id=$1)', [g]);
         await q('DELETE FROM minutes WHERE meeting_id IN (SELECT id FROM meetings WHERE group_id=$1)', [g]);
