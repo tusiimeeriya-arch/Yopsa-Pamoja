@@ -2,17 +2,11 @@ import pg from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 // The API connects as pamoja_app (not the owner, not a superuser), so row-level
-// security is enforced by PostgreSQL itself. Migrations and the demo seed use
-// ADMIN_DATABASE_URL, which is the owner role.
+// security is enforced by PostgreSQL itself. The owner role lives in owner.js
+// and is only loaded by command-line tooling, never by the API.
 export const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   max: Number(process.env.DB_POOL_MAX || 20),
-  idleTimeoutMillis: 30000,
-});
-
-export const adminPool = new pg.Pool({
-  connectionString: process.env.ADMIN_DATABASE_URL || process.env.DATABASE_URL,
-  max: 2,
   idleTimeoutMillis: 30000,
 });
 
@@ -65,22 +59,6 @@ export async function tx(fn) {
     throw err;
   } finally {
     if (ctx) ctx.txClient = null;
-    client.release();
-  }
-}
-
-/** Owner-role transaction for migrations, the seed and one-off tooling. */
-export async function adminTx(fn) {
-  const client = await adminPool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await fn(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (err) {
-    try { await client.query('ROLLBACK'); } catch { /* connection gone */ }
-    throw err;
-  } finally {
     client.release();
   }
 }

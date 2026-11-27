@@ -1,33 +1,33 @@
+#!/usr/bin/env node
 /**
  * Run the in-app system checks from the command line.
  *
- * Signs in as the demo administrator, calls POST /admin/system-checks, prints
- * every result and exits non-zero if any check failed.
+ * The checks write real rows through the application role and clean up the
+ * protected identity tables with the owner role, so this script runs in-process
+ * against the database instead of calling the HTTP route. That route is only
+ * mounted outside production; in production this script is the only way to run
+ * the checks.
  *
- *   API_BASE=http://localhost:8080/api node scripts/system-checks.mjs
+ *   DATABASE_URL=... ADMIN_DATABASE_URL=... node scripts/system-checks.mjs
+ *
+ * The checks run with the identity of an active organisation administrator so
+ * row-level security behaves exactly as it does for the API.
  */
-const BASE = process.env.API_BASE || 'http://localhost:8080/api';
-const EMAIL = process.env.CHECK_ADMIN_EMAIL || 'admin@yopsa.demo';
-const PASSWORD = process.env.DEMO_PASSWORD || 'PamojaDemo#2026';
+import { als, pool } from '../src/db.js';
+import { adminPool } from '../src/owner.js';
+import { runSystemChecks } from '../src/services/checks.js';
 
 async function main() {
-  const login = await fetch(`${BASE}/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-pamoja-client': 'web' },
-    body: JSON.stringify({ email: EMAIL, password: PASSWORD }),
-  });
-  const cookie = (login.headers.getSetCookie?.()[0] || login.headers.get('set-cookie') || '').split(';')[0];
-  if (!login.ok || !cookie) throw new Error(`login failed: ${login.status} ${await login.text()}`);
+  const admin = (await adminPool.query(
+    `SELECT u.id FROM users u
+       JOIN role_assignments ra ON ra.user_id = u.id AND ra.status = 'active'
+        AND ra.role IN ('it_admin', 'management') AND ra.scope_type = 'Org'
+      WHERE u.status = 'active'
+      ORDER BY u.created_at LIMIT 1`,
+  )).rows[0];
+  if (!admin) throw new Error('No active organisation administrator found. Run `npm run create-admin` first.');
 
-  const res = await fetch(`${BASE}/admin/system-checks`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-pamoja-client': 'web', cookie },
-    body: '{}',
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`system checks failed to run: ${res.status} ${text}`);
-  const body = JSON.parse(text);
-
+  const body = await als.run({ userId: admin.id }, () => runSystemChecks({ user: { id: admin.id } }));
   const width = Math.max(...body.results.map((r) => r.id.length), 10);
   console.log('\nIN-APP SYSTEM CHECKS');
   console.log('='.repeat(100));
@@ -38,9 +38,11 @@ async function main() {
   const MIN = Number(process.env.MIN_SYSTEM_CHECKS || 35);
   if (body.total < MIN) {
     console.error(`expected at least ${MIN} system checks, got ${body.total}`);
-    process.exit(1);
+    process.exitCode = 1;
   }
-  process.exit(body.failed ? 1 : 0);
+  if (body.failed) process.exitCode = 1;
 }
 
-main().catch((err) => { console.error(err.message); process.exit(1); });
+main()
+  .then(async () => { await pool.end(); await adminPool.end(); })
+  .catch(async (err) => { console.error(err.message); await pool.end(); await adminPool.end(); process.exitCode = 1; });

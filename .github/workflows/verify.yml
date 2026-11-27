@@ -3,7 +3,7 @@ name: verify
 # Every push and pull request proves the security invariants and the acceptance
 # suites against a real PostgreSQL, not mocks:
 #   - the database proofs run as the least-privilege application role
-#   - the in-app system checks run through the HTTP API
+#   - the in-app system checks run from the CLI against the database
 #   - the negative tests run through the HTTP API as real seeded users
 #   - npm audit and gitleaks guard dependencies and secrets
 on:
@@ -50,6 +50,10 @@ jobs:
       # leaves OTP_ON_SCREEN unset so codes are never returned or shown.
       OTP_ON_SCREEN: '1'
       API_BASE: http://localhost:8080/api
+      # CI floors: a check or test may be added, but silently removing one must
+      # fail the run.
+      MIN_SYSTEM_CHECKS: '35'
+      MIN_NEGATIVE_TESTS: '12'
     steps:
       - uses: actions/checkout@v4
         with:

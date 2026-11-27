@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { argon2id, argon2Verify } from 'hash-wasm';
+import { argonHash, argonVerify } from './argonPool.js';
 import { q } from './db.js';
 import { AppError, unauthorized, forbidden, locked, badRequest } from './errors.js';
 import { sha256, str } from './util.js';
@@ -20,27 +20,23 @@ const OTP_TTL_MINUTES = 5;
 const OTP_ON_SCREEN = process.env.OTP_ON_SCREEN === '1';
 
 export async function hashPassword(password) {
-  return argon2id({
-    password: String(password),
-    salt: crypto.randomBytes(16),
-    parallelism: PASSWORD_HASH.p,
-    iterations: PASSWORD_HASH.t,
-    memorySize: PASSWORD_HASH.m,
-    hashLength: PASSWORD_HASH.hashLength,
-    outputType: 'encoded',
-  });
+  return argonHash(password, PASSWORD_HASH);
 }
 
 export async function verifyPassword(password, stored) {
   const s = String(stored || '');
   try {
-    if (s.startsWith('$argon2id$')) return await argon2Verify({ password: String(password), hash: s });
-    // Legacy format: scrypt$N$r$p$salt$hash.
+    // Argon2id runs on the worker pool; the event loop stays free.
+    if (s.startsWith('$argon2id$')) return await argonVerify(password, s);
+    // Legacy format: scrypt$N$r$p$salt$hash. The async form uses the libuv
+    // threadpool, so it does not block the event loop either.
     const [algo, N, r, p, salt, hash] = s.split('$');
     if (algo !== 'scrypt') return false;
-    const calc = crypto.scryptSync(String(password), salt, 64, {
-      N: Number(N), r: Number(r), p: Number(p),
-      maxmem: Math.max(32 * 1024 * 1024, 128 * Number(N) * Number(r) * 2),
+    const calc = await new Promise((resolve, reject) => {
+      crypto.scrypt(String(password), salt, 64, {
+        N: Number(N), r: Number(r), p: Number(p),
+        maxmem: Math.max(32 * 1024 * 1024, 128 * Number(N) * Number(r) * 2),
+      }, (err, key) => (err ? reject(err) : resolve(key)));
     });
     const expected = Buffer.from(hash, 'base64');
     return calc.length === expected.length && crypto.timingSafeEqual(calc, expected);

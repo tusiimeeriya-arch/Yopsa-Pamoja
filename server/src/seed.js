@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { adminPool, adminTx } from './db.js';
+import { adminPool, adminTx } from './owner.js';
 import { hashPassword } from './auth.js';
 import { DEFAULTS } from './config.js';
 import { addDays, today } from './util.js';

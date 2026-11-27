@@ -292,6 +292,44 @@ async function main() {
     (ok ? pass : fail)('Registration review separation',
       `creator review: ${describe(creatorReview)} | other branch: ${describe(otherBranchReview)} | activate before approval: ${describe(activateBeforeApproval)} | independent review: ${describe(review)} | activate: ${describe(activate)}`);
   }
+
+  // 13. app.seed and app.system cannot be switched on by an HTTP request. Both
+  //     gate the privileged paths (is_demo, the system/RLS bypass) and are only
+  //     ever set transaction-locally by the seed, the scheduler and the demo
+  //     purge. A request that tries query parameters, headers and SQL-looking
+  //     body values leaves an application-role session with neither setting,
+  //     and the seed-only is_demo flip is still refused there.
+  {
+    const day = new Date().toISOString().slice(0, 10);
+    const plain = await member.get(`/groups/${g2.id}`);
+    const viaQuery = await member.get(`/groups/${g2.id}?app.seed=on&app.system=on&seed=on&system=on`);
+    const viaHeader = await member.get(`/groups/${g2.id}`, {
+      'x-pamoja-app-seed': 'on', 'x-pamoja-app-system': 'on', 'x-pamoja-seed': 'on', 'x-pamoja-system': 'on',
+    });
+    const viaBody = await treasurer.post('/payments/entries', {
+      groupId: g1.id, memberPersonId: members[0].person_id, category: 'savings', amount: 1000,
+      collectionDate: day, idempotencyKey: TAG + '-seedinj',
+      app: { seed: 'on', system: 'on' },
+      set_config: { 'app.seed': 'on', 'app.system': 'on' },
+      note: "x'); SELECT set_config('app.seed','on',true); SELECT set_config('app.system','on',true); --",
+    }, { 'x-pamoja-app-seed': 'on', 'x-pamoja-app-system': 'on' });
+    cleanup.push(['DELETE FROM payment_entries WHERE id=$1', [viaBody.body?.entry?.id]]);
+    cleanup.push(['DELETE FROM idempotency_keys WHERE key=$1', [TAG + '-seedinj']]);
+    const settings = (await appDb.query(
+      "SELECT current_setting('app.seed', true) AS seed, current_setting('app.system', true) AS system",
+    )).rows[0];
+    // The same role as the API, with an ordinary member's identity: the
+    // seed/system-only is_demo change must still be refused.
+    await appDb.query("SELECT set_config('app.user_id', $1, false)", [users['member@yopsa.demo']]);
+    let seedPath = 'allowed';
+    try { await appDb.query('UPDATE groups SET is_demo=false WHERE id=$1', [g1.id]); }
+    catch (err) { seedPath = err.code || err.message; }
+    await appDb.query('RESET app.user_id');
+    const ok = refused(plain) && refused(viaQuery) && refused(viaHeader) && viaBody.status === 201
+      && !settings.seed && !settings.system && seedPath === '42501';
+    (ok ? pass : fail)('app.seed and app.system cannot be enabled over HTTP',
+      `query: ${describe(viaQuery)} | header: ${describe(viaHeader)} | body: ${describe(viaBody)} | app session app.seed='${settings.seed}' app.system='${settings.system}' | is_demo flip: ${seedPath}`);
+  }
 }
 
 async function run() {

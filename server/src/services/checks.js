@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { q, tx, systemTx, adminTx } from '../db.js';
+import { q, tx, systemTx } from '../db.js';
+import { adminTx } from '../owner.js';
 import { policy } from '../config.js';
 import { hashPassword, verifyAndUpgrade, PASSWORD_HASH } from '../auth.js';
 import { verifyAuditChain, writeAudit } from '../audit.js';
