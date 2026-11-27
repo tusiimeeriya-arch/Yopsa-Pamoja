@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { q, tx, systemTx } from '../db.js';
+import { q, tx, systemTx, adminTx } from '../db.js';
 import { policy } from '../config.js';
-import { hashPassword } from '../auth.js';
+import { hashPassword, verifyAndUpgrade, PASSWORD_HASH } from '../auth.js';
 import { verifyAuditChain, writeAudit } from '../audit.js';
 import { loadGroup } from '../authz.js';
 import { addDays, today } from '../util.js';
@@ -44,7 +44,7 @@ export async function runSystemChecks(actor) {
   const cleanupErrors = [];
   let client;
   try {
-    const pwd = hashPassword(crypto.randomBytes(18).toString('hex'));
+    const pwd = await hashPassword(crypto.randomBytes(18).toString('hex'));
     const mkUser = async (label) => {
       const r = await q('INSERT INTO users (email, password_hash, full_name, is_demo) VALUES ($1,$2,$3,true) RETURNING id, email, full_name',
         [`${TAG.toLowerCase()}-${label}@selftest.invalid`, pwd, `Self-test ${label}`]);
@@ -366,6 +366,23 @@ export async function runSystemChecks(actor) {
         : fail('app_system_gate', 'app_system() is off for requests and only the scheduler sets it', detail);
     }));
 
+    // Password hashing: Argon2id with the approved parameters, and a legacy
+    // scrypt hash is upgraded only after a successful verification.
+    results.push(await safe('password_hash_params', 'Passwords use Argon2id (m=19456, t=2, p=1); legacy hashes upgrade on login', async () => {
+      const fresh = await hashPassword('SelfTest#Pass2026');
+      const salt = crypto.randomBytes(16).toString('base64');
+      const legacy = `scrypt$16384$8$1$${salt}$${crypto.scryptSync('SelfTest#Pass2026', salt, 64, { N: 16384, r: 8, p: 1 }).toString('base64')}`;
+      const upgraded = await verifyAndUpgrade('SelfTest#Pass2026', legacy);
+      const stable = await verifyAndUpgrade('SelfTest#Pass2026', upgraded.upgraded || '');
+      const params = `algorithm=${PASSWORD_HASH.algorithm} m=${PASSWORD_HASH.m} t=${PASSWORD_HASH.t} p=${PASSWORD_HASH.p}`;
+      const ok = fresh.startsWith(`$argon2id$v=19$m=${PASSWORD_HASH.m},t=${PASSWORD_HASH.t},p=${PASSWORD_HASH.p}$`)
+        && upgraded.ok && !!upgraded.upgraded && stable.ok && stable.upgraded === null;
+      const detail = `${params} legacyUpgraded=${!!upgraded.upgraded} rehashStable=${stable.upgraded === null}`;
+      return ok
+        ? pass('password_hash_params', 'Passwords use Argon2id (m=19456, t=2, p=1); legacy hashes upgrade on login', detail)
+        : fail('password_hash_params', 'Passwords use Argon2id (m=19456, t=2, p=1); legacy hashes upgrade on login', detail);
+    }));
+
     // Real records are never hard-deleted; the audit row that names one must
     // still resolve after a refused delete.
     results.push(await safe('hard_delete_guard', 'Users, persons, groups, memberships and role assignments cannot be hard-deleted', async () => {
@@ -417,6 +434,42 @@ export async function runSystemChecks(actor) {
       return allRefused && out.ended?.status === 'ended' && out.auditKept >= 1
         ? pass('hard_delete_guard', 'Users, persons, groups, memberships and role assignments cannot be hard-deleted', detail)
         : fail('hard_delete_guard', 'Users, persons, groups, memberships and role assignments cannot be hard-deleted', detail);
+    }));
+
+    // is_demo is immutable after insert. A real (non-demo) row cannot be
+    // flipped; the seed and system paths are the only exceptions.
+    results.push(await safe('is_demo_immutable', 'is_demo cannot be flipped on a real row; only the seed or system path may set it', async () => {
+      let out = null;
+      try {
+        await tx(async (client) => {
+          const u = (await client.query(
+            "INSERT INTO users (email, password_hash, full_name, is_demo) VALUES ($1,$2,$3,false) RETURNING id",
+            [`${TAG.toLowerCase()}-immutable@selftest.invalid`, pwd, 'Immutable guard'],
+          )).rows[0];
+          let blocked = false;
+          let code = null;
+          try {
+            await client.query('SAVEPOINT imm');
+            await client.query('UPDATE users SET is_demo=true WHERE id=$1', [u.id]);
+            await client.query('RELEASE SAVEPOINT imm');
+          } catch (err) {
+            code = err.code;
+            blocked = err.code === '42501';
+            await client.query('ROLLBACK TO SAVEPOINT imm');
+          }
+          // The seed path may set it.
+          await client.query("SELECT set_config('app.seed','on',true)");
+          await client.query('UPDATE users SET is_demo=true WHERE id=$1', [u.id]);
+          const seedAllowed = (await client.query('SELECT is_demo FROM users WHERE id=$1', [u.id])).rows[0].is_demo;
+          const rollback = new Error('rollback is_demo self-test');
+          rollback.selfTest = { blocked, code, seedAllowed };
+          throw rollback;
+        });
+      } catch (err) { out = err.selfTest || { error: err.message }; }
+      const detail = `flipBlocked=${out.blocked === true} code=${out.code} seedPathAllowed=${out.seedAllowed === true}`;
+      return out.blocked === true && out.code === '42501' && out.seedAllowed === true
+        ? pass('is_demo_immutable', 'is_demo cannot be flipped on a real row; only the seed or system path may set it', detail)
+        : fail('is_demo_immutable', 'is_demo cannot be flipped on a real row; only the seed or system path may set it', detail);
     }));
 
     // Attendance: one record per person per meeting, membership required on the
@@ -476,7 +529,9 @@ export async function runSystemChecks(actor) {
       const selfApprove = await expectReject(() => approveCorrection(vc, { correctionId: corr.correction.id }), 'Approving your own correction');
       const approved = await approveCorrection(v2, { correctionId: corr.correction.id });
       const after = Number((await q('SELECT amount FROM payment_entries WHERE id=$1', [entryId])).rows[0].amount);
-      const detail = `selfApprove=${selfApprove.rejected} status=${approved.correction?.status} amount=${after}`;
+      const requestedBy = verifier.email || verifier.id;
+      const approvedBy = verifier2.email || verifier2.id;
+      const detail = `selfApproveBlocked=${selfApprove.rejected} requestedBy=${requestedBy} approvedBy=${approvedBy} different=${verifier.id !== verifier2.id} status=${approved.correction?.status} amount=${after}`;
       return selfApprove.rejected && approved.correction?.status === 'approved' && after === 12000
         ? pass('correction_separation', 'A correction needs a different approver and only then changes the entry', detail)
         : fail('correction_separation', 'A correction needs a different approver and only then changes the entry', detail);
@@ -590,16 +645,25 @@ export async function runSystemChecks(actor) {
         await q('DELETE FROM loan_applications WHERE group_id=$1', [g]);
         await q('DELETE FROM mock_ledger_accounts WHERE group_id=$1', [g]);
         await q('DELETE FROM tasks WHERE linked_id IN (SELECT id::text FROM group_submissions WHERE group_id=$1) OR linked_id IN (SELECT id::text FROM loan_applications WHERE group_id=$1)', [g]);
-        await q('DELETE FROM memberships WHERE group_id=$1', [g]);
         await q('DELETE FROM leaderships WHERE group_id=$1', [g]);
         await q('DELETE FROM file_objects WHERE group_id=$1', [g]);
         await q('DELETE FROM learning_assignments WHERE group_id=$1', [g]);
-        await q('DELETE FROM groups WHERE id=$1', [g]);
       }
-      for (const id of ids.persons) await q('DELETE FROM persons WHERE id=$1', [id]);
+      // The API role has no DELETE on the five protected identity tables, so
+      // the owner role removes this run's demo rows (and only them).
+      await adminTx(async (c) => {
+        for (const g of ids.groups) {
+          await c.query('DELETE FROM memberships WHERE group_id=$1', [g]);
+          await c.query('DELETE FROM groups WHERE id=$1', [g]);
+        }
+        for (const id of ids.persons) await c.query('DELETE FROM persons WHERE id=$1', [id]);
+        for (const id of ids.users) {
+          await c.query('DELETE FROM idempotency_keys WHERE user_id=$1', [id]);
+          await c.query('DELETE FROM users WHERE id=$1', [id]);
+        }
+      });
       for (const id of ids.branches) await q('DELETE FROM org_branches WHERE id=$1', [id]);
       await q("DELETE FROM idempotency_keys WHERE key LIKE $1", [TAG + '%']);
-      for (const id of ids.users) await q('DELETE FROM users WHERE id=$1', [id]);
     } catch (err) {
       cleanupErrors.push(String(err.message));
     }

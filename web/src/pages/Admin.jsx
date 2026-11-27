@@ -42,6 +42,7 @@ export default function Admin() {
   const [demo, setDemo] = useState(null);
   const [exceptions, setExceptions] = useState([]);
   const [jobs, setJobs] = useState(null);
+  const [verifierCoverage, setVerifierCoverage] = useState(null);
   const [modal, setModal] = useState(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ userId: '', role: 'member', scopeType: 'Org', scopeId: 'org' });
@@ -56,7 +57,8 @@ export default function Admin() {
         const u = await get('/admin/users'); setUsers(u.users);
         const b = await get('/branches'); setBranches(b.branches);
         const g = await get('/groups'); setGroups(g.groups);
-      } else if (tab === 'users') setUsers((await get('/admin/users')).users);
+      } else if (tab === '') setVerifierCoverage(await get('/admin/verifier-coverage'));
+      else if (tab === 'users') setUsers((await get('/admin/users')).users);
       else if (tab === 'policies') setPolicies(await get('/admin/policies'));
       else if (tab === 'audit') { setAudit((await get('/admin/audit')).entries); setIntegrity(null); }
       else if (tab === 'build-progress') setProgress(await get('/admin/build-progress'));
@@ -106,6 +108,16 @@ export default function Admin() {
       <PageHead title="Administration" sub="Roles, audit, policy, checks and the build record. IT Admin has no financial verify, approve or post rights." />
       <div className="tabs" style={{ flexWrap: 'wrap' }}>{TABS.map((t) => <NavLink key={t.id} to={`/admin${t.id ? '/' + t.id : ''}`} end className={({ isActive }) => `tab ${isActive ? 'active' : ''}`}>{t.label}</NavLink>)}</div>
       <ErrorBox error={error} />
+
+      {tab === '' && verifierCoverage?.warnings?.length > 0 && (
+        <Card title="Verifier coverage warning" sub="Each branch needs at least two active verifier users for the cash steps.">
+          <ul className="small">
+            {verifierCoverage.warnings.map((b) => (
+              <li key={b.branch_id}><strong>{b.name}</strong> — {b.verifiers} active verifier{b.verifiers === 1 ? '' : 's'} (minimum 2)</li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       {tab === '' && (
         <div className="grid grid-2">

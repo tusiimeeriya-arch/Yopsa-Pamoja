@@ -401,3 +401,130 @@ now fails if its count drops below 33 / 12.
   have exact scripts in `docs/MANUAL_TESTS.md`; they are not browser-tested.
 - GitHub Actions has not been executed in this sandbox.
 - Two moderate `react-router-dom` advisories remain in the web client.
+
+---
+
+## 9. Short hardening pass
+
+Branch `security-hardening`. Output copied from the compose stack on this branch.
+
+### 9.1 Password hashing
+
+New parameters (`server/src/auth.js`):
+
+```
+PASSWORD_HASH = { algorithm: 'argon2id', m: 19456, t: 2, p: 1, hashLength: 32 }
+stored: $argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>
+```
+
+Unit test (`node --test test/password.test.js`):
+
+```
+# tests 3
+# pass 3
+# fail 0
+```
+
+In-app check:
+
+```
+PASS  password_hash_params  Passwords use Argon2id (m=19456, t=2, p=1); legacy hashes upgrade on login
+      — algorithm=argon2id m=19456 t=2 p=1 legacyUpgraded=true rehashStable=true
+```
+
+A real sign-in upgraded the seeded administrator row:
+
+```
+admin@yopsa.demo | $argon2id$v=19$m=19456
+```
+
+Accounts still on the legacy scrypt format because they have not signed in since
+the change: 4.
+
+20 concurrent logins (20 distinct accounts, one request each; memory is the API
+container's cgroup usage, not just the Node heap):
+
+```
+{
+  "users": 20,
+  "ok": 20,
+  "statuses": [200],
+  "totalMs": 1072,
+  "minMs": 158,
+  "medianMs": 952,
+  "p95Ms": 1047,
+  "maxMs": 1047,
+  "memBeforeMB": 119,
+  "memPeakMB": 244,
+  "memAfterMB": 131,
+  "peakDeltaMB": 124
+}
+```
+
+### 9.2 correction_separation
+
+```
+PASS  correction_separation  A correction needs a different approver and only then changes the entry
+      — selfApproveBlocked=true requestedBy=selftest-1795813545231-verifier@selftest.invalid
+      approvedBy=selftest-1795813545231-verifier2@selftest.invalid different=true status=approved amount=12000
+```
+
+### 9.3 is_demo and app-role privileges
+
+Run as `pamoja_app`:
+
+```
+    table_name    | can_delete | can_truncate
+------------------+------------+--------------
+ users            | f          | f
+ persons          | f          | f
+ groups           | f          | f
+ memberships      | f          | f
+ role_assignments | f          | f
+```
+
+```
+-- flipping is_demo on a real (non-demo) row:
+ERROR:  is_demo is immutable after insert; only the seed or system path may set it
+-- DELETE on users:
+ERROR:  permission denied for table users
+-- TRUNCATE on users:
+ERROR:  permission denied for table users
+```
+
+```
+PASS  is_demo_immutable  ... — flipBlocked=true code=42501 seedPathAllowed=true
+PASS  hard_delete_guard  ... — refused={"person":true,"membership":true,"group":true,"role":true,"user":true} endDated=ended auditRowsForRecord=1
+```
+
+The demo purge and the self-test cleanup now run as the owner role, because the
+API role has no DELETE on those five tables. A purge probe inside a rolled-back
+transaction completed without a privilege or trigger error and left the demo
+counts unchanged (`demo_groups 5, demo_users 13, demo_persons 63`).
+
+### 9.4 Branch verifier coverage
+
+`docs/ASSUMPTIONS.md` A-041: at least two active verifier users per branch for
+the cash steps. The Administration overview, signed in as `admin@yopsa.demo`:
+
+```
+Verifier coverage warning
+Each branch needs at least two active verifier users for the cash steps.
+Kampala Central — 1 active verifier (minimum 2)
+Mbarara — 1 active verifier (minimum 2)
+```
+
+### 9.5 Web navigation audit
+
+No `navigate` or redirect target in `web/src` is built from user-supplied
+values; the full sink list is in `docs/PROGRESS.md` item 5.
+
+### 9.6 Counts
+
+```
+IN-APP SYSTEM CHECKS: 35 passed, 0 failed, 35 total
+NEGATIVE TESTS:       12 passed, 0 failed
+TEST DATA SAFETY:     demo_groups 5 -> 5, demo_payment_entries 19 -> 19,
+                      demo_receipts 4 -> 4, demo_loans 14 -> 14,
+                      demo_roles 13 -> 13, audit_rows 32 -> 38
+```

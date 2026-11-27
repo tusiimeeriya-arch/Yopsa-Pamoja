@@ -809,6 +809,31 @@ CREATE OR REPLACE FUNCTION app_system() RETURNS boolean LANGUAGE sql STABLE AS $
   SELECT COALESCE(current_setting('app.system', true), '') = 'on'
 $$;
 
+-- is_demo marks a row as demo/test data. Once inserted it cannot be flipped on
+-- a real row: only the seed (app.seed) or the scheduler/system path
+-- (app.system) may change it.
+CREATE OR REPLACE FUNCTION is_demo_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.is_demo IS DISTINCT FROM OLD.is_demo
+     AND COALESCE(current_setting('app.seed', true), '') <> 'on'
+     AND NOT app_system() THEN
+    RAISE EXCEPTION 'is_demo is immutable after insert; only the seed or system path may set it'
+      USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_is_demo_immutable_users ON users;
+CREATE TRIGGER trg_is_demo_immutable_users BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION is_demo_immutable();
+DROP TRIGGER IF EXISTS trg_is_demo_immutable_persons ON persons;
+CREATE TRIGGER trg_is_demo_immutable_persons BEFORE UPDATE ON persons FOR EACH ROW EXECUTE FUNCTION is_demo_immutable();
+DROP TRIGGER IF EXISTS trg_is_demo_immutable_groups ON groups;
+CREATE TRIGGER trg_is_demo_immutable_groups BEFORE UPDATE ON groups FOR EACH ROW EXECUTE FUNCTION is_demo_immutable();
+DROP TRIGGER IF EXISTS trg_is_demo_immutable_memberships ON memberships;
+CREATE TRIGGER trg_is_demo_immutable_memberships BEFORE UPDATE ON memberships FOR EACH ROW EXECUTE FUNCTION is_demo_immutable();
+DROP TRIGGER IF EXISTS trg_is_demo_immutable_role_assignments ON role_assignments;
+CREATE TRIGGER trg_is_demo_immutable_role_assignments BEFORE UPDATE ON role_assignments FOR EACH ROW EXECUTE FUNCTION is_demo_immutable();
+
 CREATE OR REPLACE FUNCTION app_allowed_groups() RETURNS uuid[] LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
   SELECT COALESCE(array_agg(DISTINCT gid), ARRAY[]::uuid[]) FROM (
     SELECT g.id AS gid FROM groups g
@@ -962,3 +987,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO pa
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_logs FROM pamoja_app;
 REVOKE UPDATE, DELETE, TRUNCATE ON audit_logs FROM pamoja_web;
 GRANT SELECT, INSERT ON audit_logs TO pamoja_app;
+
+-- The five protected identity tables are never hard-deleted. The API role has
+-- no DELETE or TRUNCATE privilege on them at all; the owner-only demo purge is
+-- the one path that removes demo rows.
+REVOKE DELETE, TRUNCATE ON users, persons, groups, memberships, role_assignments FROM pamoja_app;
+REVOKE DELETE, TRUNCATE ON users, persons, groups, memberships, role_assignments FROM pamoja_web;

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { argon2id, argon2Verify } from 'hash-wasm';
 import { q } from './db.js';
 import { AppError, unauthorized, forbidden, locked, badRequest } from './errors.js';
 import { sha256, str } from './util.js';
@@ -6,7 +7,10 @@ import { policy } from './config.js';
 import { sendMessage, PROVIDER as MESSAGE_PROVIDER } from './notify.js';
 import { isProduction } from './env.js';
 
-const SCRYPT = { N: 16384, r: 8, p: 1 };
+// Argon2id at the OWASP baseline: 19 MiB memory, 2 iterations, 1 lane.
+// Legacy scrypt hashes still verify; they are replaced on the next successful
+// sign-in (see verifyAndUpgrade).
+export const PASSWORD_HASH = { algorithm: 'argon2id', m: 19456, t: 2, p: 1, hashLength: 32 };
 const SESSION_COOKIE = 'pamoja_sid';
 const SESSION_HOURS = 12;
 const OTP_TTL_MINUTES = 5;
@@ -15,20 +19,52 @@ const OTP_TTL_MINUTES = 5;
 // in every deployed environment, so the code never leaves the server there.
 const OTP_ON_SCREEN = process.env.OTP_ON_SCREEN === '1';
 
-export function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('base64');
-  const hash = crypto.scryptSync(password, salt, 64, SCRYPT).toString('base64');
-  return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt}$${hash}`;
+export async function hashPassword(password) {
+  return argon2id({
+    password: String(password),
+    salt: crypto.randomBytes(16),
+    parallelism: PASSWORD_HASH.p,
+    iterations: PASSWORD_HASH.t,
+    memorySize: PASSWORD_HASH.m,
+    hashLength: PASSWORD_HASH.hashLength,
+    outputType: 'encoded',
+  });
 }
 
-export function verifyPassword(password, stored) {
+export async function verifyPassword(password, stored) {
+  const s = String(stored || '');
   try {
-    const [algo, N, r, p, salt, hash] = String(stored).split('$');
+    if (s.startsWith('$argon2id$')) return await argon2Verify({ password: String(password), hash: s });
+    // Legacy format: scrypt$N$r$p$salt$hash.
+    const [algo, N, r, p, salt, hash] = s.split('$');
     if (algo !== 'scrypt') return false;
-    const calc = crypto.scryptSync(password, salt, 64, { N: Number(N), r: Number(r), p: Number(p) });
+    const calc = crypto.scryptSync(String(password), salt, 64, {
+      N: Number(N), r: Number(r), p: Number(p),
+      maxmem: Math.max(32 * 1024 * 1024, 128 * Number(N) * Number(r) * 2),
+    });
     const expected = Buffer.from(hash, 'base64');
     return calc.length === expected.length && crypto.timingSafeEqual(calc, expected);
   } catch { return false; }
+}
+
+/** True when the stored hash is not Argon2id with the approved parameters. */
+export function needsRehash(stored) {
+  const s = String(stored || '');
+  if (!s.startsWith('$argon2id$')) return true;
+  const m = s.match(/^\$argon2id\$v=19\$m=(\d+),t=(\d+),p=(\d+)\$/);
+  if (!m) return true;
+  return Number(m[1]) < PASSWORD_HASH.m || Number(m[2]) < PASSWORD_HASH.t || Number(m[3]) < PASSWORD_HASH.p;
+}
+
+/**
+ * Verify a password and, when the stored hash is legacy or weaker, return a
+ * fresh Argon2id hash for the caller to persist. A successful sign-in is the
+ * only place an old hash is replaced.
+ */
+export async function verifyAndUpgrade(password, stored) {
+  if (!(await verifyPassword(password, stored))) return { ok: false, upgraded: null };
+  if (!needsRehash(stored)) return { ok: true, upgraded: null };
+  return { ok: true, upgraded: await hashPassword(password) };
 }
 
 export function parseCookies(req) {
@@ -106,7 +142,8 @@ export async function login(email, password, req, res) {
   if (user.locked_until && new Date(user.locked_until) > new Date()) {
     throw locked('Too many attempts. Try again in a few minutes.');
   }
-  if (!verifyPassword(p, user.password_hash)) {
+  const check = await verifyAndUpgrade(p, user.password_hash);
+  if (!check.ok) {
     const maxAttempts = Number(await policy('auth.lockout_attempts'));
     const lockMinutes = Number(await policy('auth.lockout_minutes'));
     const attempts = user.failed_attempts + 1;
@@ -114,7 +151,12 @@ export async function login(email, password, req, res) {
     await q('UPDATE users SET failed_attempts=$2, locked_until=$3 WHERE id=$1', [user.id, lock ? 0 : attempts, lock]);
     throw generic();
   }
-  await q('UPDATE users SET failed_attempts=0, locked_until=NULL WHERE id=$1', [user.id]);
+  // A successful sign-in is the one place a legacy hash is upgraded.
+  if (check.upgraded) {
+    await q('UPDATE users SET failed_attempts=0, locked_until=NULL, password_hash=$2 WHERE id=$1', [user.id, check.upgraded]);
+  } else {
+    await q('UPDATE users SET failed_attempts=0, locked_until=NULL WHERE id=$1', [user.id]);
+  }
   await createSession(req, res, user.id);
   return { id: user.id, email: user.email, full_name: user.full_name, isDemo: user.is_demo };
 }
@@ -122,9 +164,11 @@ export async function login(email, password, req, res) {
 export async function stepUp(caller, password) {
   const p = str(password, 'Password', { max: 200 });
   const r = await q('SELECT password_hash FROM users WHERE id=$1', [caller.user.id]);
-  if (!r.rowCount || !verifyPassword(p, r.rows[0].password_hash)) {
+  const check = r.rowCount ? await verifyAndUpgrade(p, r.rows[0].password_hash) : { ok: false, upgraded: null };
+  if (!check.ok) {
     throw badRequest('Password confirmation failed.');
   }
+  if (check.upgraded) await q('UPDATE users SET password_hash=$2 WHERE id=$1', [caller.user.id, check.upgraded]);
   await q('UPDATE sessions SET step_up_at=now() WHERE id=$1', [caller.sessionId]);
   caller.stepUpAt = new Date();
 }
