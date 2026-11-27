@@ -183,15 +183,34 @@ const stages = [
   ] },
 ];
 
+// An item counts as verified only when its note names the check that proves it.
+const CHECK_REF = /\b(CHK:[a-z_]+|NEG:\d+|DB:\d+|JOB)\b/;
+
 export function buildProgress() {
+  const withChecks = stages.map((s) => ({
+    ...s,
+    items: s.items.map((i) => {
+      const check = i.check || (String(i.note || '').match(CHECK_REF) || [])[0] || null;
+      // No check named in the note: the code may exist, but nothing proves it.
+      if (i.status === BV && !check) {
+        return {
+          ...i,
+          status: NVH,
+          check: null,
+          nextStep: i.nextStep || 'No automated check covers this item yet; add one to server/src/services/checks.js, server/scripts/negative-tests.mjs or scripts/db-proof.sql.',
+        };
+      }
+      return { ...i, check };
+    }),
+  }));
   const counts = {};
-  for (const s of stages) for (const i of s.items) counts[i.status] = (counts[i.status] || 0) + 1;
+  for (const s of withChecks) for (const i of s.items) counts[i.status] = (counts[i.status] || 0) + 1;
   return {
     generatedAt: new Date().toISOString(),
     statuses: { BV, EX, NVH, N },
     counts,
-    stages,
-    note: 'BUILT AND VERIFIED means the item exists, matches this specification, and its check was run in this session (system checks, negative tests, database proofs or scheduled-job records). NOT VERIFIED HERE means the code exists but this sandbox cannot run its check (GitHub Actions, a device, an external provider). EXCEPTION carries the exact next step.',
+    stages: withChecks,
+    note: 'BUILT AND VERIFIED means the item exists and its note names the check that proves it (CHK: in-app system checks, NEG: negative tests, DB: database proofs, JOB: scheduled-job records). An item whose note names no check is downgraded to NOT VERIFIED HERE automatically. NOT VERIFIED HERE means the code exists but no check proves it here. EXCEPTION carries the exact next step.',
     exceptions: [
       'Live SMS/WhatsApp delivery: the provider-neutral stub records messages and production refuses to issue a code without a real provider. Next step: set SMS_PROVIDER and implement sendMessage against the chosen provider, then re-run the OTP proof.',
       'Alogsys core ledger: LedgerAdapter is the mock adapter. Next step: implement the Alogsys adapter and run a reconciliation drill.',

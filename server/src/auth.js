@@ -10,6 +10,10 @@ const SCRYPT = { N: 16384, r: 8, p: 1 };
 const SESSION_COOKIE = 'pamoja_sid';
 const SESSION_HOURS = 12;
 const OTP_TTL_MINUTES = 5;
+// A one-time code is echoed in the API response (and shown on screen) only when
+// an operator explicitly turns that on for a local sandbox. The switch is unset
+// in every deployed environment, so the code never leaves the server there.
+const OTP_ON_SCREEN = process.env.OTP_ON_SCREEN === '1';
 
 export function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('base64');
@@ -165,13 +169,13 @@ export async function requestOtp(caller, purpose) {
     body: `Pamoja confirmation code for ${p.replace(/_/g, ' ')}: ${code}. It expires in ${OTP_TTL_MINUTES} minutes.`,
     userId: caller.user.id,
   });
-  // The stub cannot deliver a real SMS. Outside production the code is returned
-  // so the flow can be completed; in production it is never returned.
+  // The stub cannot deliver a real SMS. Only a local sandbox with
+  // OTP_ON_SCREEN=1 gets the code back; everywhere else it is never returned.
   return {
     purpose: p,
     delivery,
     expiresInMinutes: OTP_TTL_MINUTES,
-    ...(isProduction() ? {} : { devCode: code }),
+    ...(OTP_ON_SCREEN ? { devCode: code } : {}),
   };
 }
 

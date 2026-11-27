@@ -45,6 +45,10 @@ jobs:
       PAMOJA_MASTER_KEY: ci-only-master-key
       DEMO_PASSWORD: PamojaDemo#2026
       RUN_SCHEDULER: '0'
+      # Test-only: the negative tests complete one-time-code prompts. This is a
+      # CI runner, not a deployed environment; every deployed environment
+      # leaves OTP_ON_SCREEN unset so codes are never returned or shown.
+      OTP_ON_SCREEN: '1'
       API_BASE: http://localhost:8080/api
     steps:
       - uses: actions/checkout@v4

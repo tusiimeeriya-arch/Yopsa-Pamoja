@@ -139,11 +139,14 @@ router.get('/admin/demo-guide', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
   adminOnly(caller);
   const users = await demoUsers();
+  const demoExists = Number((await q('SELECT COUNT(*) AS n FROM groups WHERE is_demo=true')).rows[0].n) > 0;
   res.json({
     users,
-    password: process.env.DEMO_PASSWORD || 'PamojaDemo#2026',
+    // No literal fallback: a demo password exists only while demo data exists
+    // and only when the operator set DEMO_PASSWORD for this environment.
+    password: demoExists ? (process.env.DEMO_PASSWORD || null) : null,
     note: 'Demo accounts exist only while demo data exists. Disable or delete every demo account before go-live.',
-    demoExists: Number((await q('SELECT COUNT(*) AS n FROM groups WHERE is_demo=true')).rows[0].n) > 0,
+    demoExists,
   });
 }));
 

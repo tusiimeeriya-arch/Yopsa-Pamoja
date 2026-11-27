@@ -168,7 +168,7 @@ export default function Admin() {
         <>
           <div className="grid grid-4 mb-2">{Object.entries(progress.counts).map(([k, v]) => <div className="stat" key={k}><div className="stat-label">{k}</div><div className="stat-value">{v}</div></div>)}</div>
           <div className="alert warn small"><strong>Exceptions</strong><ul>{progress.exceptions.map((e) => <li key={e}>{e}</li>)}</ul></div>
-          {progress.stages.map((s) => <Card key={s.stage} title={`${s.stage} · ${s.title}`} className="mt-2"><div className="table-wrap"><table><thead><tr><th style={{ width: 80 }}>Item</th><th>Requirement</th><th style={{ width: 190 }}>Status</th><th>Note / next step</th></tr></thead><tbody>{s.items.map((i) => <tr key={i.id}><td>{i.id}</td><td>{i.name}</td><td>{statusChip(i.status)}</td><td className="small">{i.note || '—'}{i.nextStep ? <div className="muted">Next: {i.nextStep}</div> : null}</td></tr>)}</tbody></table></div></Card>)}
+          {progress.stages.map((s) => <Card key={s.stage} title={`${s.stage} · ${s.title}`} className="mt-2"><div className="table-wrap"><table><thead><tr><th style={{ width: 80 }}>Item</th><th>Requirement</th><th style={{ width: 190 }}>Status</th><th style={{ width: 190 }}>Check</th><th>Note / next step</th></tr></thead><tbody>{s.items.map((i) => <tr key={i.id}><td>{i.id}</td><td>{i.name}</td><td>{statusChip(i.status)}</td><td className="small">{i.check ? (i.check.startsWith('CHK:') ? <Link className="link-btn" to="/admin/checks">{i.check}</Link> : <code>{i.check}</code>) : <span className="muted">no check</span>}</td><td className="small">{i.note || '—'}{i.nextStep ? <div className="muted">Next: {i.nextStep}</div> : null}</td></tr>)}</tbody></table></div></Card>)}
         </>
       )}
 
@@ -191,7 +191,7 @@ export default function Admin() {
       {tab === 'demo' && demo && (
         <>
           <Card title="Demo guide" sub="Demo logins are shown here only, never on the login page.">
-            <div className="alert warn">Demo password: <code>{demo.password}</code>. {demo.note}</div>
+            <div className="alert warn">{demo.password ? <>Demo password: <code>{demo.password}</code>. </> : null}{demo.note}</div>
             <div className="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Roles</th></tr></thead><tbody>{demo.users.map((u) => <tr key={u.id}><td>{u.full_name}</td><td>{u.email}</td><td>{u.roles.join(', ') || '—'}</td></tr>)}</tbody></table></div>
           </Card>
           <Card title="Purge demo data" className="mt-2">
