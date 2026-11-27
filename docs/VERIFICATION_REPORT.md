@@ -121,6 +121,25 @@ ERROR:  audit_logs is append-only: TRUNCATE is not permitted
 `UPDATE`/`DELETE` on the owner return `UPDATE 0` / `DELETE 0` because the
 append-only trigger rejects any row operation; `TRUNCATE` raises outright.
 
+### Demo purge with a non-demo group on a demo branch
+
+A group created through the UI is not demo-tagged, so it can sit on a demo
+branch. Purging demo branches unconditionally aborted the whole purge on
+`groups_branch_id_fkey`; the purge now skips any demo branch a group still
+references. Proof, run inside a transaction that is rolled back:
+
+```
+non-demo marker group on a demo branch: c6834237-...
+OLD unconditional delete rejected: update or delete on table "org_branches"
+  violates foreign key constraint "groups_branch_id_fkey" on table "groups"
+NEW purge succeeded; branches removed = 1 ; groups removed = 5
+demo branches still present (referenced by non-demo group) = 1
+ROLLED BACK — no data changed
+```
+
+After the rollback the database was unchanged (`groups=5`, `branches=2`,
+`markers=0`).
+
 ---
 
 ## 3. In-app system checks

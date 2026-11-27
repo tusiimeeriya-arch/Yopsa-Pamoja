@@ -59,6 +59,9 @@ export async function purgeDemoData(client) {
   await del('persons', 'DELETE FROM persons WHERE id = ANY($1::uuid[])', [p]);
   await del('groups', 'DELETE FROM groups WHERE id = ANY($1::uuid[])', [g]);
   await del('users', 'UPDATE users SET status=$1 WHERE id = ANY($2::uuid[])', ['disabled', u]);
-  await del('branches', 'DELETE FROM org_branches WHERE id = ANY($1::uuid[])', [branches.length ? branches : g]);
+  // A group created by a real user is not demo-tagged, so it can still point at a
+  // demo branch. Deleting that branch would violate groups_branch_id_fkey and abort
+  // the whole purge, so only remove demo branches nothing references any more.
+  await del('branches', 'DELETE FROM org_branches b WHERE b.id = ANY($1::uuid[]) AND NOT EXISTS (SELECT 1 FROM groups gr WHERE gr.branch_id = b.id)', [branches.length ? branches : g]);
   return counts;
 }
