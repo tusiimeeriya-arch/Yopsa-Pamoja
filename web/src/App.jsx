@@ -6,6 +6,7 @@ import Splash from './Splash.jsx';
 import { Toaster, Loading } from './components.jsx';
 
 const Login = lazy(() => import('./pages/Login.jsx'));
+const Privacy = lazy(() => import('./pages/Privacy.jsx'));
 const Home = lazy(() => import('./pages/Home.jsx'));
 const Groups = lazy(() => import('./pages/Groups.jsx'));
 const GroupDetail = lazy(() => import('./pages/GroupDetail.jsx'));
@@ -40,6 +41,7 @@ function Inner() {
       <Suspense fallback={<div className="content"><Loading rows={4} /></div>}>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/privacy" element={<Privacy />} />
           <Route element={<Protected><Shell /></Protected>}>
             <Route path="/" element={<Home />} />
             <Route path="/groups" element={<Groups />} />

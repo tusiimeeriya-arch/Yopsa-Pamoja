@@ -18,6 +18,7 @@ export default function Payments() {
     ...(roleSet.has('member') ? [{ id: 'me', label: 'My payments' }] : []),
     ...(roleSet.has('treasurer') || roleSet.has('field_officer') ? [{ id: 'entry', label: 'Record entries' }] : []),
     { id: 'submissions', label: 'Submissions' },
+    ...(roleSet.has('verifier') || roleSet.has('treasurer') ? [{ id: 'cash', label: 'Cash' }] : []),
     ...(roleSet.has('verifier') ? [{ id: 'receipts', label: 'Receipts' }, { id: 'corrections', label: 'Corrections' }, { id: 'queues', label: 'Queues' }] : []),
   ];
   const [tab, setTab] = useState(params.get('tab') || tabs[0]?.id || 'submissions');
@@ -29,6 +30,7 @@ export default function Payments() {
   const [mine, setMine] = useState([]);
   const [queues, setQueues] = useState(null);
   const [corrections, setCorrections] = useState([]);
+  const [cash, setCash] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState(null);
@@ -53,7 +55,20 @@ export default function Payments() {
   useEffect(() => {
     if (tab === 'queues') get('/payments/queues').then(setQueues).catch((err) => toast(err.message, 'error'));
     if (tab === 'corrections') get('/payments/corrections').then((r) => setCorrections(r.corrections)).catch(() => {});
-  }, [tab]);
+    if (tab === 'cash' && groupId) get(`/payments/cash?groupId=${groupId}`).then(setCash).catch((err) => toast(err.message, 'error'));
+  }, [tab, groupId]);
+
+  const loadCash = async () => { if (groupId) setCash(await get(`/payments/cash?groupId=${groupId}`)); };
+  const cashAction = async (path, body, msg) => {
+    setBusy(true);
+    try { await post(path, body); toast(msg); await loadCash(); }
+    catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
+  };
+  const confirmDeposit = (receiptId) => {
+    const bankRef = window.prompt('Bank deposit reference');
+    if (!bankRef) return;
+    cashAction(`/payments/cash/${receiptId}/deposit`, { bankRef, evidenceRef: 'Deposit slip' }, 'Deposit confirmed by a third person.');
+  };
 
   const refresh = async () => {
     if (!groupId) return;
@@ -89,11 +104,11 @@ export default function Payments() {
     await run(() => post('/payments/submissions', { groupId, ...period, idempotencyKey: newKey() }), 'Submission locked. Entries can no longer be edited.');
   };
 
-  const doVerify = (id) => run(() => runSensitive(() => post(`/payments/submissions/${id}/verify`, {})), 'Verification checked against receipts.');
-  const doPost = (id) => run(() => runSensitive(() => post(`/payments/submissions/${id}/post`, {})), 'Posting attempted.');
+  const doVerify = (id) => run(() => runSensitive(() => post(`/payments/submissions/${id}/verify`, {}), 'verify'), 'Verification checked against receipts.');
+  const doPost = (id) => run(() => runSensitive(() => post(`/payments/submissions/${id}/post`, {}), 'post'), 'Posting attempted.');
   const doResolve = (e) => {
     e.preventDefault();
-    run(() => runSensitive(() => post(`/payments/submissions/${selected.id}/resolve`, { ...resolve, amount: resolve.amount ? Number(resolve.amount) : undefined, idempotencyKey: newKey() })), 'Difference resolution recorded.');
+    run(() => runSensitive(() => post(`/payments/submissions/${selected.id}/resolve`, { ...resolve, amount: resolve.amount ? Number(resolve.amount) : undefined, idempotencyKey: newKey() }), 'resolve'), 'Difference resolution recorded.');
   };
   const doAllocate = (receiptId, e) => {
     e.preventDefault();
@@ -108,7 +123,7 @@ export default function Payments() {
     e.preventDefault();
     run(() => post('/payments/corrections', { ...correction, idempotencyKey: newKey() }), 'Correction requested for independent approval.');
   };
-  const approveCorrection = (id) => run(() => runSensitive(() => post(`/payments/corrections/${id}/approve`, {})), 'Correction approved and applied.');
+  const approveCorrection = (id) => run(() => runSensitive(() => post(`/payments/corrections/${id}/approve`, {}), 'correction'), 'Correction approved and applied.');
 
   const selectedSub = selected ? submissions.find((s) => s.id === selected.id) : null;
   const totals = entries.filter((e) => e.status === 'draft').reduce((acc, e) => { acc[e.category] = (acc[e.category] || 0) + Number(e.amount); return acc; }, {});
@@ -161,6 +176,17 @@ export default function Payments() {
             <div className="full row end"><button className="btn" disabled={busy || !receipt.amount || !receipt.sourceRef || !receipt.evidenceRef}>{busy ? 'Saving…' : 'Record receipt'}</button></div>
           </form>
         </Card>
+      )}
+
+      {tab === 'cash' && (
+        <div className="grid grid-2">
+          <Card title="Cash received, not yet reconciled" sub="Hand the cash over first. Only a cash receipt appears here.">
+            {cash?.unreconciled?.length ? cash.unreconciled.map((r) => <div className="alert info" key={r.id}><div className="row between"><strong>{money(r.amount)}</strong><span className="small">{r.source_ref}</span></div><div className="small">{date(r.receipt_date)}</div><button className="btn btn-sm mt-1" disabled={busy} onClick={() => cashAction(`/payments/cash/${r.id}/handover`, {}, 'Cash handed over. The branch must receive it next.')}>Hand over cash</button></div>) : <Empty title="Nothing awaiting handover" />}
+          </Card>
+          <Card title="Three-step reconciliation" sub="Handover (treasurer) → received by the branch → deposit confirmed by a third person with a bank reference.">
+            {cash?.reconciliations?.length ? <div className="table-wrap"><table><thead><tr><th>Amount</th><th>Status</th><th>Handed over</th><th>Received</th><th>Deposited</th><th /></tr></thead><tbody>{cash.reconciliations.map((c) => <tr key={c.id}><td className="right amount">{money(c.amount)}</td><td><StatusChip status={c.status} /></td><td className="small">{c.handover_by_name || '—'}</td><td className="small">{c.received_by_name || '—'}</td><td className="small">{c.deposited_by_name || '—'}{c.bank_ref ? ` · ${c.bank_ref}` : ''}</td><td className="nowrap">{c.status === 'awaiting_receipt' && <button className="link-btn" disabled={busy} onClick={() => cashAction(`/payments/cash/${c.receipt_id}/receive`, {}, 'Branch receipt confirmed.')}>Receive</button>}{c.status === 'awaiting_deposit' && <button className="link-btn" disabled={busy} onClick={() => confirmDeposit(c.receipt_id)}>Confirm deposit</button>}</td></tr>)}</tbody></table></div> : <Empty title="No cash in reconciliation" />}
+          </Card>
+        </div>
       )}
 
       {tab === 'corrections' && (

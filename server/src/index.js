@@ -1,7 +1,8 @@
 import express from 'express';
-import { ready } from './db.js';
+import { ready, als } from './db.js';
 import { AppError } from './errors.js';
 import { attachCaller } from './authz.js';
+import { isProduction } from './env.js';
 import { router as authRouter } from './routes/auth.js';
 import { router as meRouter } from './routes/me.js';
 import { router as groupsRouter } from './routes/groups.js';
@@ -11,9 +12,7 @@ import { router as loansRouter } from './routes/loans.js';
 import { router as dashboardRouter } from './routes/dashboard.js';
 import { router as supportRouter } from './routes/support.js';
 import { router as adminRouter } from './routes/admin.js';
-import { runEscalations } from './services/escalation.js';
-import { computeRanking } from './services/ranking.js';
-import { tx } from './db.js';
+import { assertSchedulerConfig, startScheduler } from './scheduler.js';
 
 const app = express();
 const PORT = Number(process.env.PORT || 8080);
@@ -54,13 +53,38 @@ app.post('/api/auth/login', (req, res, next) => {
   next();
 });
 
+app.post('/api/auth/password-reset', (req, res, next) => {
+  if (!rateLimit(`pwd-reset:${req.ip}`, 5, 15 * 60 * 1000)) return res.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Too many requests. Try again later.' } });
+  next();
+});
+
 app.use(attachCaller);
+
+// Every authenticated request carries the caller's identity into PostgreSQL, so
+// the row-level security policies filter every statement it issues.
+app.use((req, res, next) => {
+  if (!req.caller) return next();
+  als.run({ userId: req.caller.user.id }, () => next());
+});
+
 app.use('/api', (req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers['x-pamoja-client'] !== 'web') {
     return res.status(403).json({ error: { code: 'CSRF_BLOCKED', message: 'Request rejected.' } });
   }
   next();
 });
+
+// Rate limiting on the routes that move money, change roles or export data.
+const SENSITIVE_PREFIXES = ['/api/payments', '/api/loans', '/api/admin', '/api/meetings', '/api/groups', '/api/disputes', '/api/comments', '/api/tasks', '/api/learning'];
+app.use(SENSITIVE_PREFIXES, (req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD') return next();
+  const who = req.caller?.user?.id || req.ip;
+  if (!rateLimit(`sensitive:${who}:${req.method}`, Number(process.env.SENSITIVE_RATE_LIMIT || 60), 60 * 1000)) {
+    return res.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Too many changes in a short time. Wait a moment and try again.' } });
+  }
+  next();
+});
+
 app.use('/api/auth', authRouter);
 app.use('/api', (req, res, next) => {
   if (!req.caller) return res.status(401).json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in to continue.' } });
@@ -85,20 +109,22 @@ app.use((err, req, res, next) => {
   if (!err.status && err.code === '23505') { status = 409; message = 'That record already exists.'; }
   else if (!err.status && err.code === '23503') { status = 400; message = 'A linked record is missing or still in use.'; }
   else if (!err.status && (err.code === '22P02' || err.code === '22007')) { status = 400; message = 'One of the values is not in the expected format.'; }
-  if (status >= 500) console.error(JSON.stringify({ level: 'error', message: err.message, stack: process.env.NODE_ENV === 'production' ? undefined : err.stack, path: req.path }));
+  else if (!err.status && err.code === '23514') { status = 409; message = err.message; }
+  else if (!err.status && err.code === '42501') { status = 403; message = 'That change is not permitted.'; }
+  if (status >= 500) console.error(JSON.stringify({ level: 'error', message: err.message, stack: isProduction() ? undefined : err.stack, path: req.path }));
   res.status(status).json({ error: { code: err.code || 'INTERNAL', message: status >= 500 ? 'Something went wrong. Try again.' : message, ...(err.details ? { details: err.details } : {}) } });
 });
+
+// Refuse to boot a production process whose job intervals are below the floor.
+try {
+  assertSchedulerConfig();
+} catch (err) {
+  console.error(JSON.stringify({ level: 'error', message: 'refusing to start', reason: err.message }));
+  process.exit(1);
+}
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(JSON.stringify({ level: 'info', message: `pamoja api listening on ${PORT}` }));
 });
 
-// Hourly follow-up sweep. Idempotent: dedupe keys prevent duplicates.
-setInterval(async () => {
-  try { await tx(async (client) => runEscalations(client)); } catch (err) { console.error(JSON.stringify({ level: 'error', message: 'escalation sweep failed', error: err.message })); }
-}, 60 * 60 * 1000).unref();
-
-// Daily operational ranking snapshot (manual snapshots remain available).
-setInterval(async () => {
-  try { await tx(async (client) => computeRanking({ persist: true, caller: null, client })); } catch (err) { console.error(JSON.stringify({ level: 'error', message: 'ranking snapshot failed', error: err.message })); }
-}, 24 * 60 * 60 * 1000).unref();
+if (process.env.RUN_SCHEDULER !== '0') startScheduler();

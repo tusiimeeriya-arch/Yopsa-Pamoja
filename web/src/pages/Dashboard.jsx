@@ -38,7 +38,7 @@ export default function Dashboard() {
         const res = await api('/dashboard/export?' + qs, { raw: true });
         const text = await res.text();
         csvDownload(text, `pamoja-${card}-${todayLocal()}.csv`);
-      });
+      }, 'export');
       toast('Export generated and audited.');
     } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
   };

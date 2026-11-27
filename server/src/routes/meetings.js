@@ -286,7 +286,7 @@ router.post('/meetings/:id/documents', asyncHandler(async (req, res) => {
   if (!req.body.consentFlag) throw badRequest('Record consent before uploading a meeting document.');
   if (!req.body.photoPolicyAck) throw badRequest('Acknowledge the group photo policy.');
   validateUpload(req.body);
-  const buf = decodeBase64(req.body.data);
+  const buf = decodeBase64(req.body.data, req.body.mime);
   return tx(async (client) => {
     const f = (await client.query(
       `INSERT INTO file_objects (group_id, kind, filename, mime, size, data, uploaded_by) VALUES ($1,'meeting_document',$2,$3,$4,$5,$6) RETURNING id`,

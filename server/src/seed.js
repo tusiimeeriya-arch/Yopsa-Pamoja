@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
-import { pool, tx } from './db.js';
+import { adminPool, adminTx } from './db.js';
 import { hashPassword } from './auth.js';
 import { DEFAULTS } from './config.js';
 import { addDays, today } from './util.js';
+import { isProduction } from './env.js';
 
 const BATCH = 'DEMO-2026-11';
 const PASSWORD = process.env.DEMO_PASSWORD || 'PamojaDemo#2026';
@@ -12,10 +13,14 @@ const ts = (daysAgo, hour = 10) => iso(daysAgo) + `T${String(hour).padStart(2, '
 function pick(seed, n) { return Math.abs(Math.sin(seed * 99991) * 10000) % n; }
 
 async function main() {
-  const existing = await pool.query('SELECT 1 FROM groups WHERE demo_batch=$1 LIMIT 1', [BATCH]);
-  if (existing.rowCount) { console.log('demo data already present; skipping'); await pool.end(); return; }
+  if (isProduction()) {
+    console.error('Refusing to load demo data in production. Use `npm run create-admin` instead.');
+    process.exit(1);
+  }
+  const existing = await adminPool.query('SELECT 1 FROM groups WHERE demo_batch=$1 LIMIT 1', [BATCH]);
+  if (existing.rowCount) { console.log('demo data already present; skipping'); await adminPool.end(); return; }
 
-  await tx(async (c) => {
+  await adminTx(async (c) => {
     // ---- reference data ----
     await c.query(`INSERT INTO group_type_configs (type, label, categories, flags) VALUES
       ('VSLA','Village Savings and Loan Association','["savings","shares","social_fund","fines","subscriptions","loan_repayment"]','{"meetings":true,"shares":true}'),
@@ -153,7 +158,6 @@ async function main() {
         for (let k = 0; k < active.length; k += 1) {
           const roll = pick(gi * 100 + i * 13 + k, 100);
           const status = roll < 78 ? 'present' : roll < 88 ? 'late' : roll < 94 ? 'excused' : 'absent';
-          if (status === 'absent') continue;
           await c.query(
             `INSERT INTO attendance_records (meeting_id, person_id, status, method, recorded_by, checked_in_at)
              VALUES ($1,$2,$3,$4,$5,$6)`,
@@ -192,6 +196,26 @@ async function main() {
       `INSERT INTO receipts (group_id, submission_id, amount, receipt_date, source_ref, destination, channel, evidence_ref, recorded_by, is_demo, demo_batch)
        VALUES ($1,$2,180000,$3,'DEMO-RCPT-001','Yopsa collection account','bank','Bank slip DEMO-001',$4,true,$5)`,
       [g1.id, sub1.id, iso(13), verifier.id, BATCH],
+    );
+
+    // Cash path demo: handed over by the treasurer and received by the branch;
+    // the deposit (third person) is still outstanding.
+    const cashReceipt = (await c.query(
+      `INSERT INTO receipts (group_id, amount, receipt_date, source_ref, destination, channel, evidence_ref, recorded_by, is_demo, demo_batch)
+       VALUES ($1,60000,$2,'DEMO-CASH-001','Kampala branch cash box','cash','Cash count sheet DEMO-001',$3,true,$4) RETURNING *`,
+      [g1.id, iso(2), verifier.id, BATCH],
+    )).rows[0];
+    await c.query(
+      `INSERT INTO cash_reconciliations (receipt_id, group_id, amount, status, handover_by, handover_at, received_by, received_at)
+       VALUES ($1,$2,60000,'awaiting_deposit',$3,$4,$5,$4)`,
+      [cashReceipt.id, g1.id, treasurer.id, ts(2), verifier.id],
+    );
+
+    // Internal member-to-member loan: a separate record, never a Yopsa loan.
+    await c.query(
+      `INSERT INTO member_loans (group_id, lender_person_id, borrower_person_id, amount, purpose, agreed_on, due_on, witness_person_id, recorded_by)
+       VALUES ($1,$2,$3,50000,'School fees between members',$4,$5,$6,$7)`,
+      [g1.id, g1m[3].person.id, g1m[4].person.id, iso(9), addDays(today(), 30), g1m[1].person.id, treasurer.id],
     );
 
     const g2 = groups[1];
@@ -310,15 +334,22 @@ async function main() {
 
     // comments, disputes, tasks
     await c.query("INSERT INTO comments (group_id, body, visibility, author_user_id) VALUES ($1,'Reminder: bring your savings book to the next meeting.','group',$2)", [g1.id, secretary.id]);
-    const attendanceForDispute = (await c.query("SELECT a.* FROM attendance_records a JOIN meetings m ON m.id=a.meeting_id WHERE m.group_id=$1 AND a.person_id=$2 AND a.status='absent' LIMIT 1", [g1.id, g1m[3].person.id])).rows[0]
-      || (await c.query("SELECT a.* FROM attendance_records a JOIN meetings m ON m.id=a.meeting_id WHERE m.group_id=$1 LIMIT 1", [g1.id])).rows[0];
-    if (attendanceForDispute) {
-      await c.query(
-        `INSERT INTO disputes (kind, entity, entity_id, group_id, person_id, raised_by_user_id, reason, original_value, assigned_to_user_id, is_demo)
-         VALUES ('attendance','AttendanceRecord',$1,$2,$3,$4,'I attended this meeting but the register shows me absent. Please review.','absent',$5,true)`,
-        [attendanceForDispute.id, g1.id, g1m[3].person.id, member.id, officer.id],
-      );
-    }
+    // The dispute is based on a register entry that really says "absent" for
+    // the person raising it. There is no fallback to an unrelated row.
+    const attendanceForDispute = (await c.query(
+      `SELECT a.*, p.linked_user_id FROM attendance_records a
+         JOIN meetings m ON m.id=a.meeting_id
+         JOIN persons p ON p.id=a.person_id
+        WHERE m.group_id=$1 AND a.status='absent'
+        ORDER BY (p.linked_user_id IS NULL), a.person_id LIMIT 1`,
+      [g1.id],
+    )).rows[0];
+    if (!attendanceForDispute) throw new Error('seed: no absent attendance record exists to base the demo dispute on');
+    await c.query(
+      `INSERT INTO disputes (kind, entity, entity_id, group_id, person_id, raised_by_user_id, reason, original_value, assigned_to_user_id, is_demo)
+       VALUES ('attendance','AttendanceRecord',$1,$2,$3,$4,'I attended this meeting but the register shows me absent. Please review.','absent',$5,true)`,
+      [attendanceForDispute.id, g1.id, attendanceForDispute.person_id, attendanceForDispute.linked_user_id || member.id, officer.id],
+    );
     const myEntry = (await c.query("SELECT * FROM payment_entries WHERE member_person_id=$1 LIMIT 1", [g1m[3].person.id])).rows[0];
     if (myEntry) {
       await c.query(
@@ -333,7 +364,7 @@ async function main() {
 
     console.log('demo seed complete');
   });
-  await pool.end();
+  await adminPool.end();
 }
 
-main().catch(async (err) => { console.error(err); await pool.end(); process.exit(1); });
+main().catch(async (err) => { console.error(err); await adminPool.end(); process.exit(1); });

@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { api, post } from './api.js';
+import { api, post, setOtpCode, ApiError } from './api.js';
 import { clearDrafts } from './drafts.js';
 
 const AuthContext = createContext(null);
@@ -12,7 +12,7 @@ export function AuthProvider({ children }) {
   const [demoMode, setDemoMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const [idleMessage, setIdleMessage] = useState('');
-  const [stepUp, setStepUp] = useState(null);
+  const [otp, setOtp] = useState(null);
   const resolver = useRef(null);
   const [splash, setSplash] = useState(() => !sessionStorage.getItem('pamoja:splash'));
   const [splashFade, setSplashFade] = useState(false);
@@ -72,56 +72,70 @@ export function AuthProvider({ children }) {
     setUser(null); setRoles([]); setNav([]); setIsAdmin(false);
   };
 
-  const runSensitive = useCallback(async (fn) => {
+  /**
+   * Sensitive actions need a one-time code for the exact purpose (verify,
+   * resolve, post, correction, approve, disburse, role_change, export, policy,
+   * purge, snapshot). The code is requested, confirmed, then sent with the
+   * retried request only.
+   */
+  const runSensitive = useCallback(async (fn, purpose = 'sensitive') => {
     try {
       return await fn();
     } catch (err) {
-      if (err.code !== 'STEP_UP_REQUIRED') throw err;
-      const password = await new Promise((resolve) => {
+      if (!['OTP_REQUIRED', 'OTP_INVALID'].includes(err.code)) throw err;
+      const req = await post('/auth/otp/request', { purpose });
+      const code = await new Promise((resolve) => {
         resolver.current = resolve;
-        setStepUp({ open: true });
+        setOtp({ open: true, purpose, devCode: req.devCode });
       });
-      await post('/auth/step-up', { password });
-      setStepUp(null);
-      return fn();
+      if (!code) throw new ApiError('Cancelled.', 'OTP_CANCELLED', 0);
+      setOtpCode(code);
+      try {
+        return await fn();
+      } finally {
+        setOtpCode(null);
+        setOtp(null);
+      }
     }
   }, []);
 
-  const submitStepUp = async (password) => {
-    try {
-      await post('/auth/step-up', { password });
-      setStepUp(null);
-      resolver.current?.(password);
-    } catch (err) {
-      setStepUp((s) => ({ ...s, error: err.message }));
-    }
+  const submitOtp = (code) => {
+    resolver.current?.(code);
   };
-
-  const cancelStepUp = () => {
-    setStepUp(null);
+  const cancelOtp = () => {
+    setOtp(null);
     resolver.current?.(null);
   };
 
   return (
     <AuthContext.Provider value={{ user, roles, nav, isAdmin, demoMode, loading, idleMessage, login, logout, loadMe, runSensitive, splash, splashFade }}>
       {children}
-      {stepUp?.open && <StepUpModal error={stepUp.error} onSubmit={submitStepUp} onCancel={cancelStepUp} />}
+      {otp?.open && <OtpModal purpose={otp.purpose} devCode={otp.devCode} onSubmit={submitOtp} onCancel={cancelOtp} />}
     </AuthContext.Provider>
   );
 }
 
-function StepUpModal({ onSubmit, onCancel, error }) {
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
+function OtpModal({ purpose, devCode, onSubmit, onCancel }) {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const label = String(purpose).replace(/_/g, ' ');
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirm your password">
-      <div className="modal" style={{ maxWidth: 420 }}>
-        <div className="modal-head"><h2 className="card-title">Confirm your password</h2><button className="modal-close" onClick={onCancel} aria-label="Close">×</button></div>
-        <p className="muted small">This is a sensitive action. Re-confirm your password to continue.</p>
-        <form onSubmit={async (e) => { e.preventDefault(); setBusy(true); await onSubmit(password); setBusy(false); }}>
-          <div className="field"><label className="label" htmlFor="stepup-pw">Password</label><input id="stepup-pw" className="input" type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} required /></div>
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirm with a one-time code">
+      <div className="modal" style={{ maxWidth: 430 }}>
+        <div className="modal-head"><h2 className="card-title">Confirm with a one-time code</h2><button className="modal-close" onClick={onCancel} aria-label="Close">×</button></div>
+        <p className="muted small">A six-digit code was sent to you for this {label} action. Enter it to continue.</p>
+        {devCode && <div className="alert info small">This environment has no SMS provider. Your code is <strong>{devCode}</strong>.</div>}
+        <form onSubmit={(e) => {
+          e.preventDefault();
+          if (!/^\d{6}$/.test(code)) { setError('Enter the six-digit code.'); return; }
+          onSubmit(code);
+        }}>
+          <div className="field">
+            <label className="label" htmlFor="otp-code">One-time code</label>
+            <input id="otp-code" className="input" inputMode="numeric" autoComplete="one-time-code" maxLength={6} autoFocus value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} />
+          </div>
           {error && <div className="error-text mb-2">{error}</div>}
-          <div className="row end"><button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button><button className="btn" disabled={busy || !password}>{busy ? 'Confirming…' : 'Confirm'}</button></div>
+          <div className="row end"><button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button><button className="btn" disabled={code.length !== 6}>Confirm</button></div>
         </form>
       </div>
     </div>

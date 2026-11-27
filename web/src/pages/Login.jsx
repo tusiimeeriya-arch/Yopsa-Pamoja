@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
+import { post } from '../api.js';
 import { Modal } from '../components.jsx';
 
 export default function Login() {
@@ -13,6 +14,9 @@ export default function Login() {
   const [error, setError] = useState('');
   const [help, setHelp] = useState(null);
   const [install, setInstall] = useState(null);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetMessage, setResetMessage] = useState('');
+  const [resetBusy, setResetBusy] = useState(false);
 
   useEffect(() => {
     const handler = (e) => { e.preventDefault(); setInstall(e); };
@@ -30,6 +34,16 @@ export default function Login() {
     try { await login(email.trim(), password); navigate('/', { replace: true }); }
     catch (err) { setError(err.message || 'Email or password is incorrect.'); }
     finally { setBusy(false); }
+  };
+
+  const requestReset = async (e) => {
+    e.preventDefault();
+    setResetBusy(true);
+    try {
+      const r = await post('/auth/password-reset', { email: resetEmail.trim() });
+      setResetMessage(r.message);
+    } catch (err) { setResetMessage(err.message); }
+    finally { setResetBusy(false); }
   };
 
   const isIos = /iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -59,26 +73,24 @@ export default function Login() {
           </form>
           <div className="row between mt-2">
             <button className="link-btn" type="button" onClick={() => setHelp('forgot')}>Forgot password?</button>
-            <button className="link-btn" type="button" onClick={() => setHelp('privacy')}>Privacy notice</button>
+            <Link className="link-btn" to="/privacy">Privacy notice</Link>
           </div>
           {install && <button className="btn btn-secondary btn-block mt-2" onClick={async () => { install.prompt(); await install.userChoice; setInstall(null); }}>Install app</button>}
           {!install && isIos && <div className="install-hint">To install: tap Share, then “Add to Home Screen”.</div>}
           <div className="login-foot">© Yopsa Microfinance<br />Pamoja complements the Yopsa core ledger and never replaces it.</div>
         </div>
       </div>
-      <Modal open={!!help} onClose={() => setHelp(null)} title={help === 'privacy' ? 'Privacy notice' : 'Forgot password'}>
-        {help === 'privacy' ? (
-          <div className="small">
-            <p>Pamoja collects only what is needed to manage group membership, meetings, savings and loan records for Yopsa Microfinance.</p>
-            <p>We do not use facial recognition, continuous location tracking or sell your data. Consent is recorded when a member is registered. Financial and audit records are retained as required by policy.</p>
-            <p>Your data is visible only to the Yopsa staff and group officers whose role and scope allow it. Contact your Yopsa branch for access or correction requests.</p>
+      <Modal open={help === 'forgot'} onClose={() => { setHelp(null); setResetMessage(''); }} title="Forgot password">
+        <form onSubmit={requestReset} className="small">
+          <p>Enter the email you use for Pamoja. An administrator will verify who you are and help you reset the password.</p>
+          <div className="field">
+            <label className="label" htmlFor="reset-email">Email</label>
+            <input id="reset-email" className="input" type="email" value={resetEmail} onChange={(e) => setResetEmail(e.target.value)} required />
           </div>
-        ) : (
-          <div className="small">
-            <p>Password reset is handled by your Pamoja administrator. Contact your Yopsa branch or IT administrator to reset your password.</p>
-            <p>For security, this page never reveals whether an account exists.</p>
-          </div>
-        )}
+          {resetMessage && <div className="alert info" role="status">{resetMessage}</div>}
+          <div className="row end"><button type="button" className="btn btn-secondary" onClick={() => { setHelp(null); setResetMessage(''); }}>Close</button><button className="btn" disabled={resetBusy || !resetEmail.trim()}>{resetBusy ? 'Sending…' : 'Request reset'}</button></div>
+          <p className="muted">For security, this page never reveals whether an account exists.</p>
+        </form>
       </Modal>
     </div>
   );

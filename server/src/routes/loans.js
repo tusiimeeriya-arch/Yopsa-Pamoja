@@ -3,8 +3,9 @@ import { q } from '../db.js';
 import { requireCaller, hasRole, isAdmin } from '../authz.js';
 import { asyncHandler } from '../util.js';
 import { forbidden, notFound } from '../errors.js';
-import { requireStepUp } from '../auth.js';
+import { guardOtp } from '../otpGuard.js';
 import { changeLoanMaterial, createLoanApplication, performanceProfile, recordDisbursement, transitionLoan } from '../services/loans.js';
+import { createMemberLoan, listMemberLoans, settleMemberLoan } from '../services/memberLoans.js';
 import { canAccessGroup, visibleGroups } from './groups.js';
 
 export const router = express.Router();
@@ -55,14 +56,14 @@ router.get('/loans/:id', asyncHandler(async (req, res) => {
 
 router.post('/loans/:id/transition', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
-  if (['approve', 'decline'].includes(req.body.action)) requireStepUp(caller);
+  if (['approve', 'decline'].includes(req.body.action)) await guardOtp(req, 'approve');
   const result = await transitionLoan(caller, req.params.id, req.body);
   res.json(result);
 }));
 
 router.post('/loans/:id/disburse', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
-  requireStepUp(caller);
+  await guardOtp(req, 'disburse');
   const result = await recordDisbursement(caller, req.params.id, req.body);
   res.status(201).json(result);
 }));
@@ -79,4 +80,20 @@ router.get('/groups/:id/performance', asyncHandler(async (req, res) => {
   if (!group) throw notFound('Group not found.');
   if (!(await canAccessGroup(caller, group))) throw forbidden();
   res.json(await performanceProfile(group.id));
+}));
+
+// ---------- Internal member-to-member loans (separate workflow) ----------
+router.get('/member-loans', asyncHandler(async (req, res) => {
+  const caller = requireCaller(req);
+  res.json(await listMemberLoans(caller, req.query.groupId));
+}));
+
+router.post('/member-loans', asyncHandler(async (req, res) => {
+  const caller = requireCaller(req);
+  res.status(201).json(await createMemberLoan(caller, req.body));
+}));
+
+router.post('/member-loans/:id/settle', asyncHandler(async (req, res) => {
+  const caller = requireCaller(req);
+  res.json(await settleMemberLoan(caller, req.params.id, req.body));
 }));

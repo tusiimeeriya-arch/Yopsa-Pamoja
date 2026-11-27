@@ -9,17 +9,24 @@ export class ApiError extends Error {
   }
 }
 
+// Set for exactly one request after a one-time code has been confirmed.
+let otpCode = null;
+export function setOtpCode(code) { otpCode = code; }
+
 export async function api(path, { method = 'GET', body, headers = {}, raw = false } = {}) {
   let res;
+  const otpHeader = otpCode ? { 'x-pamoja-otp': otpCode } : {};
   try {
     res = await fetch(BASE + path, {
       method,
       credentials: 'same-origin',
-      headers: { 'content-type': 'application/json', 'x-pamoja-client': 'web', ...headers },
+      headers: { 'content-type': 'application/json', 'x-pamoja-client': 'web', ...otpHeader, ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (err) {
     throw new ApiError('You appear to be offline. Your unsent work can be saved as a draft.', 'OFFLINE', 0);
+  } finally {
+    otpCode = null;
   }
   if (res.status === 401) {
     let payload = null;

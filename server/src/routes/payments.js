@@ -3,12 +3,13 @@ import { q } from '../db.js';
 import { requireCaller, hasRole, isAdmin, requireRole } from '../authz.js';
 import { asyncHandler } from '../util.js';
 import { forbidden } from '../errors.js';
-import { requireStepUp } from '../auth.js';
+import { guardOtp } from '../otpGuard.js';
 import { groupOr404 } from '../services/common.js';
 import {
   allocateReceipt, approveCorrection, memberPaymentView, postToLedger, recordPaymentEntry,
   recordReceipt, requestCorrection, resolveDifference, submitGroup, verifySubmission,
 } from '../services/payments.js';
+import { confirmDeposit, listCash, receiveCash, handOverCash } from '../services/cash.js';
 import { canAccessGroup, visibleGroups } from './groups.js';
 
 export const router = express.Router();
@@ -91,14 +92,14 @@ router.post('/payments/receipts', asyncHandler(async (req, res) => {
 
 router.post('/payments/submissions/:id/verify', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
-  requireStepUp(caller);
+  await guardOtp(req, 'verify');
   const result = await verifySubmission(caller, { submissionId: req.params.id });
   res.json(result);
 }));
 
 router.post('/payments/submissions/:id/resolve', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
-  requireStepUp(caller);
+  await guardOtp(req, 'resolve');
   const result = await resolveDifference(caller, { ...req.body, submissionId: req.params.id });
   res.json(result);
 }));
@@ -111,7 +112,7 @@ router.post('/payments/allocations', asyncHandler(async (req, res) => {
 
 router.post('/payments/submissions/:id/post', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
-  requireStepUp(caller);
+  await guardOtp(req, 'post');
   const result = await postToLedger(caller, { submissionId: req.params.id });
   res.json(result);
 }));
@@ -124,7 +125,7 @@ router.post('/payments/corrections', asyncHandler(async (req, res) => {
 
 router.post('/payments/corrections/:id/approve', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
-  requireStepUp(caller);
+  await guardOtp(req, 'correction');
   const result = await approveCorrection(caller, { correctionId: req.params.id });
   res.json(result);
 }));
@@ -166,4 +167,27 @@ router.get('/payments/ledger', asyncHandler(async (req, res) => {
 router.get('/payments/me', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
   res.json({ payments: await memberPaymentView(caller) });
+}));
+
+// ---------- Cash handover and deposit reconciliation ----------
+// Three separate steps by three different people: handover (treasurer),
+// receipt by the branch, deposit confirmed with a bank reference.
+router.get('/payments/cash', asyncHandler(async (req, res) => {
+  const caller = requireCaller(req);
+  res.json(await listCash(caller, req.query.groupId));
+}));
+
+router.post('/payments/cash/:receiptId/handover', asyncHandler(async (req, res) => {
+  const caller = requireCaller(req);
+  res.json(await handOverCash(caller, req.params.receiptId, req.body));
+}));
+
+router.post('/payments/cash/:receiptId/receive', asyncHandler(async (req, res) => {
+  const caller = requireCaller(req);
+  res.json(await receiveCash(caller, req.params.receiptId));
+}));
+
+router.post('/payments/cash/:receiptId/deposit', asyncHandler(async (req, res) => {
+  const caller = requireCaller(req);
+  res.status(201).json(await confirmDeposit(caller, req.params.receiptId, req.body));
 }));

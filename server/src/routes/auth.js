@@ -1,6 +1,6 @@
 import express from 'express';
 import { q } from '../db.js';
-import { destroySession, login, stepUp } from '../auth.js';
+import { destroySession, login, requestOtp, requestPasswordReset, stepUp } from '../auth.js';
 import { requireCaller, navFor } from '../authz.js';
 import { asyncHandler } from '../util.js';
 
@@ -23,7 +23,7 @@ router.get('/me', asyncHandler(async (req, res) => {
     roles: caller.assignments,
     nav: navFor(caller),
     isAdmin: caller.assignments.some((a) => ['it_admin', 'management'].includes(a.role) && a.scope_type === 'Org'),
-    demoMode: (await q('SELECT EXISTS(SELECT 1 FROM groups WHERE is_demo=true) AS demo')).rows[0].demo,
+    demoMode: (await q('SELECT EXISTS(SELECT 1 FROM org_branches WHERE is_demo=true) AS demo')).rows[0].demo,
   });
 }));
 
@@ -31,6 +31,15 @@ router.post('/step-up', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
   await stepUp(caller, req.body.password);
   res.json({ ok: true, stepUpAt: new Date().toISOString() });
+}));
+
+router.post('/otp/request', asyncHandler(async (req, res) => {
+  const caller = requireCaller(req);
+  res.json(await requestOtp(caller, req.body.purpose || 'sensitive'));
+}));
+
+router.post('/password-reset', asyncHandler(async (req, res) => {
+  res.json(await requestPasswordReset(req.body.email));
 }));
 
 router.get('/sessions', asyncHandler(async (req, res) => {
