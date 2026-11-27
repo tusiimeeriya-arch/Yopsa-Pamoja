@@ -302,8 +302,11 @@ export async function approveCorrection(caller, input) {
     const group = await groupOr404(entry.group_id, client);
     requireRole(caller, ['verifier'], { groupId: group.id, branchId: group.branch_id });
     const value = c.field === 'amount' ? amt(c.new_value) : c.new_value;
-    await client.query(`UPDATE payment_entries SET ${c.field}=$2 WHERE id=$1`, [entry.id, value]);
+    // Mark the correction approved first, then let the payment-entry trigger see
+    // that this exact, approved correction authorises the change.
     await client.query("UPDATE corrections SET status='approved', approved_by=$2, applied_at=now() WHERE id=$1", [c.id, caller.user.id]);
+    await client.query("SELECT set_config('app.correction_id', $1, true)", [c.id]);
+    await client.query(`UPDATE payment_entries SET ${c.field}=$2 WHERE id=$1`, [entry.id, value]);
     await writeAudit(client, caller, { action: 'correction.approve', entity: 'Correction', entityId: c.id, before: { [c.field]: c.original_value }, after: { [c.field]: c.new_value }, reason: c.reason, scopeType: 'Group', scopeId: group.id });
     return { correction: { ...c, status: 'approved' } };
   });

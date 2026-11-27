@@ -4,6 +4,7 @@ import { requireCaller, hasRole, isAdmin, requireRole } from '../authz.js';
 import { asyncHandler, csv, oneOf, str, intValue, isoDate, today } from '../util.js';
 import { forbidden, badRequest } from '../errors.js';
 import { requireStepUp } from '../auth.js';
+import { guardOtp } from '../otpGuard.js';
 import { writeAudit } from '../audit.js';
 import { dashboardData, drilldown } from '../services/dashboard.js';
 import { computeRanking, activePolicy } from '../services/ranking.js';
@@ -27,7 +28,7 @@ router.get('/dashboard/drill', asyncHandler(async (req, res) => {
 router.get('/dashboard/export', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
   if (!(hasRole(caller, ['management', 'auditor', 'field_officer', 'credit_approver', 'verifier', 'it_admin']))) throw forbidden();
-  requireStepUp(caller);
+  await guardOtp(req, 'export');
   const card = oneOf(req.query.card, ['groups', 'members', 'loansAdvanced', 'flows', 'arrears'], 'Card');
   const rows = await drilldown(caller, card, req.query);
   await tx(async (client) => {
@@ -49,7 +50,7 @@ router.get('/ranking', asyncHandler(async (req, res) => {
 router.post('/ranking/snapshot', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
   if (!(hasRole(caller, ['management', 'credit_approver']) || isAdmin(caller))) throw forbidden();
-  requireStepUp(caller);
+  await guardOtp(req, 'snapshot');
   const cutoff = isoDate(req.body.cutoff || today(), 'Cut-off date');
   const result = await tx(async (client) => computeRanking({ cutoff, persist: true, caller, client }));
   res.status(201).json(result);
@@ -80,7 +81,7 @@ router.post('/ranking/policies', asyncHandler(async (req, res) => {
 router.post('/ranking/policies/:id/approve', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
   requireRole(caller, ['management']);
-  requireStepUp(caller);
+  await guardOtp(req, 'policy');
   const pol = (await q('SELECT * FROM ranking_policy_versions WHERE id=$1', [req.params.id])).rows[0];
   if (!pol) throw badRequest('Policy version not found.');
   if (pol.author_user_id === caller.user.id) throw forbidden('The author of a ranking policy cannot approve it.');

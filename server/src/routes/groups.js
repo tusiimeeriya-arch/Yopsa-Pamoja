@@ -125,27 +125,29 @@ router.post('/groups/:id/members', asyncHandler(async (req, res) => {
   const gender = oneOf(req.body.gender || 'NotStated', ['Female', 'Male', 'Other', 'NotStated'], 'Gender');
   const joinDate = isoDate(req.body.joinDate || today(), 'Join date');
   if (!req.body.consentRecorded) throw badRequest('Record the member’s consent before adding them.');
-  const existing = (await q(
-    `SELECT p.id, p.full_name, g.id AS group_id, g.name AS group_name, g.status FROM persons p
-     JOIN memberships m ON m.person_id=p.id JOIN groups g ON g.id=m.group_id
-     WHERE m.status='active' AND (p.phone=$1 OR ($2::text IS NOT NULL AND p.national_id_ref=$2)) AND g.id <> $3`,
-    [phone, nationalIdRef, group.id],
-  )).rows;
+  // The lookup runs as a SECURITY DEFINER function so a duplicate already
+  // registered in another branch is still detected under row-level security.
+  const lookup = (await q('SELECT * FROM app_person_lookup($1,$2)', [phone, nationalIdRef])).rows;
+  const existing = lookup
+    .filter((r) => r.group_id && r.group_id !== group.id)
+    .map((r) => ({ id: r.person_id, full_name: r.full_name, group_id: r.group_id, group_name: r.group_name, status: r.group_status }));
   if (existing.length && !req.body.acknowledgeDuplicate) {
     throw conflict('This person is active in another group. Review the existing obligations before continuing.', {
       code: 'DUPLICATE_MEMBER', existing, obligations: existing.map((e) => ({ group: e.group_name, status: e.status })),
     });
   }
   return tx(async (client) => {
-    let person = (await client.query('SELECT * FROM persons WHERE phone=$1 LIMIT 1', [phone])).rows[0];
-    if (!person) {
+    const match = lookup.find((r) => r.person_id);
+    let person;
+    if (match) {
+      person = { id: match.person_id, full_name: match.full_name };
+      await client.query('SELECT app_record_consent($1)', [person.id]);
+    } else {
       person = (await client.query(
         `INSERT INTO persons (full_name, phone, national_id_ref, gender, date_of_birth, consent_recorded, consent_at, created_by)
          VALUES ($1,$2,$3,$4,$5,true,now(),$6) RETURNING *`,
         [fullName, phone, nationalIdRef, gender, isoDate(req.body.dateOfBirth, 'Date of birth', { optional: true }), caller.user.id],
       )).rows[0];
-    } else {
-      await client.query('UPDATE persons SET consent_recorded=true, consent_at=now() WHERE id=$1', [person.id]);
     }
     const m = (await client.query(
       `INSERT INTO memberships (person_id, group_id, join_date, status, created_by) VALUES ($1,$2,$3,'active',$4) RETURNING *`,
@@ -275,7 +277,7 @@ router.post('/groups/:id/documents', asyncHandler(async (req, res) => {
   requireGroupRole(caller, group, ['field_officer', 'secretary', 'chairperson']);
   const kind = oneOf(req.body.kind, ['registration_evidence', 'rules', 'leadership_evidence', 'other'], 'Document kind');
   validateUpload(req.body);
-  const buf = decodeBase64(req.body.data);
+  const buf = decodeBase64(req.body.data, req.body.mime);
   return tx(async (client) => {
     const f = (await client.query(
       `INSERT INTO file_objects (group_id, kind, filename, mime, size, data, uploaded_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,

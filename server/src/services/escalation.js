@@ -2,8 +2,8 @@ import { q } from '../db.js';
 import { addDays, today } from '../util.js';
 import { createTask, notify } from './common.js';
 
-async function ownerForGroup(groupId, role) {
-  const r = await q(
+async function ownerForGroup(client, groupId, role) {
+  const r = await client.query(
     `SELECT COALESCE(
        (SELECT p.linked_user_id FROM leaderships l JOIN persons p ON p.id=l.person_id
         WHERE l.group_id=$1 AND l.position=$2 AND l.effective_from<=current_date AND (l.effective_to IS NULL OR l.effective_to>=current_date) AND p.linked_user_id IS NOT NULL LIMIT 1),

@@ -4,6 +4,7 @@ import { requireCaller, requireOrgAdmin, isAdmin, hasRole, ROLES } from '../auth
 import { asyncHandler, str, oneOf, isoDate, today, intValue } from '../util.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { requireStepUp } from '../auth.js';
+import { guardOtp } from '../otpGuard.js';
 import { writeAudit, verifyAuditChain } from '../audit.js';
 import { runSystemChecks } from '../services/checks.js';
 import { buildProgress } from '../data/buildProgress.js';
@@ -32,7 +33,7 @@ router.post('/admin/role-assignments', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
   requireOrgAdmin(caller);
   if (!hasRole(caller, ['it_admin'])) throw forbidden('IT Admin proposes role changes; a second administrator approves them.');
-  requireStepUp(caller);
+  await guardOtp(req, 'role_change');
   const userId = str(req.body.userId, 'User', { max: 60 });
   const role = oneOf(req.body.role, ROLES, 'Role');
   const scopeType = oneOf(req.body.scopeType, ['Org', 'Branch', 'Group'], 'Scope type');
@@ -57,7 +58,7 @@ router.post('/admin/role-assignments', asyncHandler(async (req, res) => {
 router.post('/admin/role-assignments/:id/approve', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
   requireOrgAdmin(caller);
-  requireStepUp(caller);
+  await guardOtp(req, 'role_change');
   return tx(async (client) => {
     const ra = (await client.query('SELECT * FROM role_assignments WHERE id=$1 FOR UPDATE', [req.params.id])).rows[0];
     if (!ra) throw notFound('Role assignment not found.');
@@ -73,7 +74,7 @@ router.post('/admin/role-assignments/:id/approve', asyncHandler(async (req, res)
 router.post('/admin/role-assignments/:id/revoke', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
   requireOrgAdmin(caller);
-  requireStepUp(caller);
+  await guardOtp(req, 'role_change');
   return tx(async (client) => {
     const ra = (await client.query('SELECT * FROM role_assignments WHERE id=$1 FOR UPDATE', [req.params.id])).rows[0];
     if (!ra) throw notFound('Role assignment not found.');
@@ -149,9 +150,11 @@ router.get('/admin/demo-guide', asyncHandler(async (req, res) => {
 router.post('/admin/purge-demo', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
   requireOrgAdmin(caller);
-  requireStepUp(caller);
+  await guardOtp(req, 'purge');
   if (req.body.confirm !== 'PURGE DEMO DATA') throw badRequest('Type PURGE DEMO DATA to confirm.');
   const result = await tx(async (client) => {
+    // Allows the payment-immutability trigger to remove demo rows only.
+    await client.query("SELECT set_config('app.demo_purge', 'on', true)");
     const counts = await purgeDemoData(client);
     await writeAudit(client, caller, { action: 'demo.purge', entity: 'DemoBatch', entityId: 'demo', after: counts, reason: 'Purge demo data', scopeType: 'Org', scopeId: 'org' });
     return counts;
@@ -169,7 +172,7 @@ router.get('/admin/policies', asyncHandler(async (req, res) => {
 router.post('/admin/policies', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
   if (!hasRole(caller, ['management'])) throw forbidden('Only management can change policy values.');
-  requireStepUp(caller);
+  await guardOtp(req, 'policy');
   const key = str(req.body.key, 'Policy key', { max: 120 });
   const value = req.body.value;
   if (value === undefined || value === null) throw badRequest('A policy value is required.');
@@ -183,6 +186,19 @@ router.post('/admin/policies', asyncHandler(async (req, res) => {
     invalidatePolicy();
     res.status(201).json({ policy: p });
   });
+}));
+
+router.get('/admin/jobs', asyncHandler(async (req, res) => {
+  const caller = requireCaller(req);
+  adminOnly(caller);
+  const runs = (await q('SELECT * FROM job_runs ORDER BY started_at DESC LIMIT 50')).rows;
+  const counts = (await q(
+    `SELECT job, COUNT(*)::int AS runs, MAX(started_at) AS last_run,
+            COUNT(*) FILTER (WHERE status='ok')::int AS ok,
+            COUNT(*) FILTER (WHERE status='failed')::int AS failed
+     FROM job_runs GROUP BY job ORDER BY job`,
+  )).rows;
+  res.json({ runs, summary: counts });
 }));
 
 router.get('/admin/exceptions', asyncHandler(async (req, res) => {

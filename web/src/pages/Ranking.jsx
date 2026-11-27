@@ -23,7 +23,7 @@ export default function Ranking() {
   const takeSnapshot = async () => {
     setBusy(true);
     try {
-      const r = await runSensitive(() => post('/ranking/snapshot', { cutoff: data.window.to }));
+      const r = await runSensitive(() => post('/ranking/snapshot', { cutoff: data.window.to }), 'snapshot');
       setSnap(r.snapshot); toast('Ranking snapshot saved.'); load();
     } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
   };
@@ -34,7 +34,7 @@ export default function Ranking() {
   };
   const approve = async (id) => {
     setBusy(true);
-    try { await runSensitive(() => post(`/ranking/policies/${id}/approve`, {})); toast('Policy version approved.'); load(); }
+    try { await runSensitive(() => post(`/ranking/policies/${id}/approve`, {}), 'policy'); toast('Policy version approved.'); load(); }
     catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
   };
 

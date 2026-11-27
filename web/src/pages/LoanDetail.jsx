@@ -29,8 +29,8 @@ export default function LoanDetail() {
     catch (err) { toast(err.message, 'error'); }
     finally { setBusy(false); }
   };
-  const transition = (action) => run(() => runSensitive(() => post(`/loans/${id}/transition`, { action, reason })), 'Status updated and audited.');
-  const disburse = (e) => { e.preventDefault(); run(() => runSensitive(() => post(`/loans/${id}/disburse`, { amount: Number(disb.amount), disbursedOn: disb.disbursedOn, idempotencyKey: crypto.randomUUID() })), 'Disbursement recorded by Finance.'); };
+  const transition = (action) => run(() => runSensitive(() => post(`/loans/${id}/transition`, { action, reason }), ['approve', 'decline'].includes(action) ? 'approve' : 'sensitive'), 'Status updated and audited.');
+  const disburse = (e) => { e.preventDefault(); run(() => runSensitive(() => post(`/loans/${id}/disburse`, { amount: Number(disb.amount), disbursedOn: disb.disbursedOn, idempotencyKey: crypto.randomUUID() }), 'disburse'), 'Disbursement recorded by Finance.'); };
   const material = (e) => { e.preventDefault(); run(() => patch(`/loans/${id}`, { amount: change.amount ? Number(change.amount) : undefined, termMonths: change.termMonths ? Number(change.termMonths) : undefined, purpose: change.purpose || undefined, reason: change.reason }), 'Material change recorded.'); };
 
   if (!data && !error) return <Loading rows={4} />;

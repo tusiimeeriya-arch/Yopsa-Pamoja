@@ -8,13 +8,14 @@ import { date, dateTime, money } from '../fmt.js';
 const TABS = [
   { id: '', label: 'Overview' }, { id: 'roles', label: 'Roles' }, { id: 'users', label: 'Users' }, { id: 'policies', label: 'Policies' },
   { id: 'audit', label: 'Audit log' }, { id: 'checks', label: 'System checks' }, { id: 'build-progress', label: 'Build progress' },
-  { id: 'security', label: 'Security' }, { id: 'assumptions', label: 'About and assumptions' }, { id: 'demo', label: 'Demo guide' }, { id: 'exceptions', label: 'Exceptions' },
+  { id: 'security', label: 'Security' }, { id: 'jobs', label: 'Scheduled jobs' }, { id: 'assumptions', label: 'About and assumptions' }, { id: 'demo', label: 'Demo guide' }, { id: 'exceptions', label: 'Exceptions' },
 ];
 
 const ROLES = ['member', 'secretary', 'treasurer', 'chairperson', 'field_officer', 'verifier', 'credit_approver', 'management', 'auditor', 'it_admin'];
 
 function statusChip(s) {
   if (s === 'BUILT AND VERIFIED') return <span className="chip verified">BUILT AND VERIFIED</span>;
+  if (s === 'EXCEPTION') return <span className="chip pending">EXCEPTION</span>;
   if (s === 'PARTIAL') return <span className="chip pending">PARTIAL</span>;
   if (s === 'BUILT BUT FAILING') return <span className="chip disputed">BUILT BUT FAILING</span>;
   return <span className="chip returned">NOT BUILT</span>;
@@ -39,6 +40,7 @@ export default function Admin() {
   const [security, setSecurity] = useState(null);
   const [demo, setDemo] = useState(null);
   const [exceptions, setExceptions] = useState([]);
+  const [jobs, setJobs] = useState(null);
   const [modal, setModal] = useState(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ userId: '', role: 'member', scopeType: 'Org', scopeId: 'org' });
@@ -61,6 +63,7 @@ export default function Admin() {
       else if (tab === 'assumptions') setAssumptions(await get('/admin/assumptions'));
       else if (tab === 'demo') setDemo(await get('/admin/demo-guide'));
       else if (tab === 'exceptions') setExceptions((await get('/admin/exceptions')).exceptions);
+      else if (tab === 'jobs') setJobs(await get('/admin/jobs'));
     } catch (err) { setError(err); }
     finally { setLoading(false); }
   };
@@ -73,20 +76,20 @@ export default function Admin() {
   };
   const propose = async (e) => {
     e.preventDefault(); setBusy(true);
-    try { await runSensitive(() => post('/admin/role-assignments', form)); toast('Role proposed. A second administrator must approve.'); setModal(null); loadTab(); }
+    try { await runSensitive(() => post('/admin/role-assignments', form), 'role_change'); toast('Role proposed. A second administrator must approve.'); setModal(null); loadTab(); }
     catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
   };
-  const approve = async (id) => { setBusy(true); try { await runSensitive(() => post(`/admin/role-assignments/${id}/approve`, {})); toast('Role approved.'); loadTab(); } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); } };
-  const revoke = async (id) => { setBusy(true); try { await runSensitive(() => post(`/admin/role-assignments/${id}/revoke`, { reason: 'Revoked by administrator' })); toast('Role revoked.'); loadTab(); } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); } };
+  const approve = async (id) => { setBusy(true); try { await runSensitive(() => post(`/admin/role-assignments/${id}/approve`, {}), 'role_change'); toast('Role approved.'); loadTab(); } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); } };
+  const revoke = async (id) => { setBusy(true); try { await runSensitive(() => post(`/admin/role-assignments/${id}/revoke`, { reason: 'Revoked by administrator' }), 'role_change'); toast('Role revoked.'); loadTab(); } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); } };
   const savePolicy = async (e) => {
     e.preventDefault(); setBusy(true);
-    try { const value = JSON.parse(policyEdit.value); await runSensitive(() => post('/admin/policies', { key: policyEdit.key, value })); toast('Policy version created.'); setModal(null); loadTab(); }
+    try { const value = JSON.parse(policyEdit.value); await runSensitive(() => post('/admin/policies', { key: policyEdit.key, value }), 'policy'); toast('Policy version created.'); setModal(null); loadTab(); }
     catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
   };
   const checkIntegrity = async () => { setBusy(true); try { setIntegrity(await get('/admin/audit/integrity')); } catch (err) { toast(err.message, 'error'); } finally { setBusy(false); } };
   const purge = async () => {
     setBusy(true);
-    try { await runSensitive(() => post('/admin/purge-demo', { confirm: confirmText })); toast('Demo data purged. Audit rows retained.'); setConfirmText(''); loadTab(); }
+    try { await runSensitive(() => post('/admin/purge-demo', { confirm: confirmText }), 'purge'); toast('Demo data purged. Audit rows retained.'); setConfirmText(''); loadTab(); }
     catch (err) { toast(err.message, 'error'); } finally { setBusy(false); }
   };
   const resolveException = async (id) => {
@@ -122,7 +125,7 @@ export default function Admin() {
               <Field label="Scope"><select className="input" value={form.scopeType} onChange={(e) => setForm((f) => ({ ...f, scopeType: e.target.value, scopeId: e.target.value === 'Org' ? 'org' : '' }))}><option value="Org">Organisation</option><option value="Branch">Branch</option><option value="Group">Group</option></select></Field>
               {form.scopeType === 'Branch' && <Field label="Branch"><select className="input" value={form.scopeId} onChange={(e) => setForm((f) => ({ ...f, scopeId: e.target.value }))} required><option value="">Select branch</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>}
               {form.scopeType === 'Group' && <Field label="Group"><select className="input" value={form.scopeId} onChange={(e) => setForm((f) => ({ ...f, scopeId: e.target.value }))} required><option value="">Select group</option>{groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>}
-              <div className="alert warn small">You will confirm your password. A second administrator approves. You cannot approve your own role grant.</div>
+              <div className="alert warn small">You will confirm with a one-time code. A second administrator approves. You cannot approve your own role grant.</div>
               <div className="row end"><button type="button" className="btn btn-secondary" onClick={() => setModal(null)}>Cancel</button><button className="btn" disabled={busy || !form.userId || !form.scopeId}>Propose</button></div>
             </form>
           </Modal>
@@ -163,6 +166,7 @@ export default function Admin() {
       {tab === 'build-progress' && progress && (
         <>
           <div className="grid grid-4 mb-2">{Object.entries(progress.counts).map(([k, v]) => <div className="stat" key={k}><div className="stat-label">{k}</div><div className="stat-value">{v}</div></div>)}</div>
+          <div className="alert warn small"><strong>Exceptions</strong><ul>{progress.exceptions.map((e) => <li key={e}>{e}</li>)}</ul></div>
           {progress.stages.map((s) => <Card key={s.stage} title={`${s.stage} · ${s.title}`} className="mt-2"><div className="table-wrap"><table><thead><tr><th style={{ width: 80 }}>Item</th><th>Requirement</th><th style={{ width: 190 }}>Status</th><th>Note / next step</th></tr></thead><tbody>{s.items.map((i) => <tr key={i.id}><td>{i.id}</td><td>{i.name}</td><td>{statusChip(i.status)}</td><td className="small">{i.note || '—'}{i.nextStep ? <div className="muted">Next: {i.nextStep}</div> : null}</td></tr>)}</tbody></table></div></Card>)}
         </>
       )}
@@ -193,6 +197,17 @@ export default function Admin() {
             <p className="small">Deletes only records tagged <code>isDemo</code>. AuditLog rows are never deleted. Demo accounts are disabled.</p>
             <div className="field" style={{ maxWidth: 360 }}><label className="label" htmlFor="confirm">Type PURGE DEMO DATA</label><input id="confirm" className="input" value={confirmText} onChange={(e) => setConfirmText(e.target.value)} /></div>
             <button className="btn btn-danger" disabled={busy || confirmText !== 'PURGE DEMO DATA' || !demo.demoExists} onClick={purge}>Purge demo data</button>
+          </Card>
+        </>
+      )}
+
+      {tab === 'jobs' && jobs && (
+        <>
+          <Card title="Scheduled jobs" sub="The ranking snapshot and task escalation run on a schedule and every run is recorded.">
+            <div className="table-wrap"><table><thead><tr><th>Job</th><th className="right">Runs</th><th className="right">OK</th><th className="right">Failed</th><th>Last run</th></tr></thead><tbody>{jobs.summary.map((j) => <tr key={j.job}><td>{j.job}</td><td className="right">{j.runs}</td><td className="right">{j.ok}</td><td className="right">{j.failed}</td><td>{dateTime(j.last_run)}</td></tr>)}</tbody></table></div>
+          </Card>
+          <Card title="Recent runs" className="mt-2">
+            <div className="table-wrap"><table><thead><tr><th>Job</th><th>Started</th><th>Finished</th><th>Status</th><th>Result</th></tr></thead><tbody>{jobs.runs.map((r) => <tr key={r.id}><td>{r.job}</td><td>{dateTime(r.started_at)}</td><td>{r.finished_at ? dateTime(r.finished_at) : '—'}</td><td><StatusChip status={r.status} /></td><td className="small"><code>{r.result ? JSON.stringify(r.result).slice(0, 160) : (r.error || '—')}</code></td></tr>)}</tbody></table></div>
           </Card>
         </>
       )}
