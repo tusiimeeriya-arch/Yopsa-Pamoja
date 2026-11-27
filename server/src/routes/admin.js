@@ -1,5 +1,7 @@
 import express from 'express';
-import { q, tx, adminTx } from '../db.js';
+import { q, tx } from '../db.js';
+import { adminTx } from '../owner.js';
+import { isProduction } from '../env.js';
 import { requireCaller, requireOrgAdmin, isAdmin, hasRole, ROLES } from '../authz.js';
 import { asyncHandler, str, oneOf, isoDate, today, intValue } from '../util.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
@@ -130,12 +132,18 @@ router.get('/admin/audit/integrity', asyncHandler(async (req, res) => {
   res.json(await verifyAuditChain({ query: q }));
 }));
 
-router.post('/admin/system-checks', asyncHandler(async (req, res) => {
-  const caller = requireCaller(req);
-  adminOnly(caller);
-  const result = await runSystemChecks(caller);
-  res.json(result);
-}));
+// Demo purge and the in-app self-tests are development tools. They need the
+// owner role to clean up the protected identity tables, so the production API
+// does not mount them at all (the paths 404). There they run from the command
+// line: scripts/purge-demo.mjs and scripts/system-checks.mjs.
+if (!isProduction()) {
+  router.post('/admin/system-checks', asyncHandler(async (req, res) => {
+    const caller = requireCaller(req);
+    adminOnly(caller);
+    const result = await runSystemChecks(caller);
+    res.json(result);
+  }));
+}
 
 router.get('/admin/build-progress', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
@@ -170,25 +178,27 @@ router.get('/admin/demo-guide', asyncHandler(async (req, res) => {
   });
 }));
 
-router.post('/admin/purge-demo', asyncHandler(async (req, res) => {
-  const caller = requireCaller(req);
-  requireOrgAdmin(caller);
-  await guardOtp(req, 'purge');
-  if (req.body.confirm !== 'PURGE DEMO DATA') throw badRequest('Type PURGE DEMO DATA to confirm.');
-  const result = await adminTx(async (client) => {
-    // The purge deletes across every tenant table by explicit demo id. It runs
-    // as the owner because the API role deliberately has no DELETE on the five
-    // protected identity tables. The is_demo / demo-id filters below are what
-    // limit it to demo data.
-    await client.query("SELECT set_config('app.system', 'on', true)");
-    // Allows the payment-immutability trigger to remove demo rows only.
-    await client.query("SELECT set_config('app.demo_purge', 'on', true)");
-    const counts = await purgeDemoData(client);
-    await writeAudit(client, caller, { action: 'demo.purge', entity: 'DemoBatch', entityId: 'demo', after: counts, reason: 'Purge demo data', scopeType: 'Org', scopeId: 'org' });
-    return counts;
-  });
-  res.json({ result, note: 'AuditLog rows were retained. Demo accounts are disabled.' });
-}));
+if (!isProduction()) {
+  router.post('/admin/purge-demo', asyncHandler(async (req, res) => {
+    const caller = requireCaller(req);
+    requireOrgAdmin(caller);
+    await guardOtp(req, 'purge');
+    if (req.body.confirm !== 'PURGE DEMO DATA') throw badRequest('Type PURGE DEMO DATA to confirm.');
+    const result = await adminTx(async (client) => {
+      // The purge deletes across every tenant table by explicit demo id. It runs
+      // as the owner because the API role deliberately has no DELETE on the five
+      // protected identity tables. The is_demo / demo-id filters below are what
+      // limit it to demo data.
+      await client.query("SELECT set_config('app.system', 'on', true)");
+      // Allows the payment-immutability trigger to remove demo rows only.
+      await client.query("SELECT set_config('app.demo_purge', 'on', true)");
+      const counts = await purgeDemoData(client);
+      await writeAudit(client, caller, { action: 'demo.purge', entity: 'DemoBatch', entityId: 'demo', after: counts, reason: 'Purge demo data', scopeType: 'Org', scopeId: 'org' });
+      return counts;
+    });
+    res.json({ result, note: 'AuditLog rows were retained. Demo accounts are disabled.' });
+  }));
+}
 
 router.get('/admin/policies', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);

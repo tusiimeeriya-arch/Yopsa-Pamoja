@@ -128,8 +128,25 @@ try {
   process.exit(1);
 }
 
+// The production API must never hold the owner role's credentials: owner access
+// belongs to command-line tooling (seed, create-admin, purge, self-tests). A
+// process that starts with them fails closed instead of running with them.
+if (isProduction() && process.env.ADMIN_DATABASE_URL) {
+  console.error(JSON.stringify({
+    level: 'error',
+    message: 'refusing to start',
+    reason: 'ADMIN_DATABASE_URL must not be set for the production API; owner access is CLI-only',
+  }));
+  process.exit(1);
+}
+
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(JSON.stringify({ level: 'info', message: `pamoja api listening on ${PORT}` }));
+  console.log(JSON.stringify({
+    level: 'info',
+    message: `pamoja api listening on ${PORT}`,
+    ownerCredentials: process.env.ADMIN_DATABASE_URL ? 'present' : 'absent',
+    demoTooling: isProduction() ? 'absent' : 'mounted',
+  }));
 });
 
 if (process.env.RUN_SCHEDULER !== '0') startScheduler();

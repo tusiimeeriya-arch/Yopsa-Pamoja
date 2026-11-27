@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { adminPool } from './db.js';
+import { adminPool } from './owner.js';
 import { hashPassword } from './auth.js';
 
 /**

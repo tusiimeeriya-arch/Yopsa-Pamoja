@@ -65,7 +65,9 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       PORT: "8080"
       DATABASE_URL: postgres://pamoja_app:${APP_DB_PASSWORD:-pamoja_app_dev_password}@db:5432/pamoja
-      ADMIN_DATABASE_URL: postgres://pamoja:${POSTGRES_PASSWORD:-pamoja_dev_password}@db:5432/pamoja
+      # No ADMIN_DATABASE_URL here: the owner role belongs to CLI tooling
+      # (migrate, seed, purge, self-tests). With NODE_ENV=production the API
+      # refuses to start if it is set.
       PAMOJA_MASTER_KEY: ${PAMOJA_MASTER_KEY:-dev-only-master-key}
       ESCALATION_JOB_SECONDS: ${ESCALATION_JOB_SECONDS:-3600}
       RANKING_JOB_SECONDS: ${RANKING_JOB_SECONDS:-86400}

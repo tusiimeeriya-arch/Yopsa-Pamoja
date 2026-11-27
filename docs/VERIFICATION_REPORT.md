@@ -528,3 +528,99 @@ TEST DATA SAFETY:     demo_groups 5 -> 5, demo_payment_entries 19 -> 19,
                       demo_receipts 4 -> 4, demo_loans 14 -> 14,
                       demo_roles 13 -> 13, audit_rows 32 -> 38
 ```
+
+## 10. Hardening pass 2 (`security-hardening-2`)
+
+### 10.1 Owner-role credentials
+
+The owner role is now reached through one module, `server/src/owner.js`. It
+reads `ADMIN_DATABASE_URL` and nothing else: there is no fallback to
+`DATABASE_URL`, so a process without the variable has no owner pool and
+`adminTx()` throws. Consumers (full table in `docs/OWNER_ACCESS.md`): the seed,
+`createAdmin`, the self-test cleanup, the two non-production admin routes, the
+purge and self-test CLI scripts, the negative tests, and the `seed` service in
+`deploy/docker-compose.app.yml`. The owner URL was removed from that file's
+`api` service.
+
+Demo purge and self-tests are mounted only when the process is not production;
+in production they run from `server/scripts/purge-demo.mjs` and
+`server/scripts/system-checks.mjs`. The API refuses to start with the owner URL
+in a production environment.
+
+A production-mode process with no owner URL, on the same database and code:
+
+```
+{"level":"info","message":"pamoja api listening on 8099","ownerCredentials":"absent","demoTooling":"absent"}
+GET /api/health -> 200 {"status":"ok","database":true,...}
+```
+
+The same process started with `ADMIN_DATABASE_URL` set:
+
+```
+{"level":"error","message":"refusing to start","reason":"ADMIN_DATABASE_URL must not be set for the production API; owner access is CLI-only"}
+exit=1
+```
+
+Both routes, with a valid organisation-administrator session on that
+production process, and the same calls against the development process:
+
+```
+PRODUCTION POST /api/admin/purge-demo    -> 404 {"error":{"code":"NOT_FOUND","message":"Not found."}}
+PRODUCTION POST /api/admin/system-checks -> 404 {"error":{"code":"NOT_FOUND","message":"Not found."}}
+PRODUCTION /api/auth/me                  -> 200
+DEV        POST /api/admin/purge-demo    -> 403 {"error":{"code":"OTP_REQUIRED",...}}
+DEV        POST /api/admin/system-checks -> 200 passed 35 failed 0 total 35
+```
+
+The self-tests run from the command line without the HTTP route, against the
+same database, with the identity of an active organisation administrator:
+
+```
+IN-APP SYSTEM CHECKS
+35 passed, 0 failed, 35 total (tag SELFTEST-1795814399249)
+```
+
+### 10.2 Argon2id off the main thread
+
+`server/src/argonPool.js` keeps two worker threads (`ARGON_WORKERS` overrides)
+running `server/src/argonWorker.js`; `hashPassword` and `verifyPassword`
+dispatch there. Legacy scrypt hashes verify with the async `crypto.scrypt`, so
+they use the libuv threadpool instead of blocking the loop.
+
+Health-endpoint latency during a 50-login burst, measured from inside the API
+container by polling `/api/health` every 50 ms while 50 concurrent sign-ins ran:
+
+| | login burst | health during burst |
+|---|---|---|
+| before (main thread) | `ok=50/50 wallMs=3168` | `n=2 median=2511ms p95=2511ms max=2511ms` |
+| after (worker pool) | `ok=50/50 wallMs=4081` | `n=75 median=3ms p95=4ms max=110ms` |
+
+Idle baseline in both runs: `n=29 median=2ms p95=4ms max=37ms`. Unit tests:
+`node --test test/*.test.js` → `# tests 3 / # pass 3 / # fail 0`.
+
+### 10.3 `app.seed` and `app.system` over HTTP
+
+Negative test 13 sends query parameters, headers and SQL-looking body values
+that try to switch both settings on, then reads them on an application-role
+session and attempts the seed-only `is_demo` change there:
+
+```
+PASS  app.seed and app.system cannot be enabled over HTTP  query: 404 NOT_FOUND Group not found. | header: 404 NOT_FOUND Group not found. | body: 201 | app session app.seed='null' app.system='null' | is_demo flip: 42501
+```
+
+### 10.4 CI floors
+
+`.github/workflows/verify.yml` now sets `MIN_SYSTEM_CHECKS: '35'` and
+`MIN_NEGATIVE_TESTS: '12'` in the job environment; both scripts exit non-zero
+below the floor.
+
+### 10.5 Counts
+
+```
+IN-APP SYSTEM CHECKS: 35 passed, 0 failed, 35 total
+NEGATIVE TESTS:       13 passed, 0 failed
+TEST DATA SAFETY:     demo_groups 5 -> 5, demo_payment_entries 19 -> 19,
+                      demo_receipts 4 -> 4, demo_loans 14 -> 14,
+                      demo_roles 13 -> 13, audit_rows 16 -> 23
+PASSWORD TESTS:       3 passed, 0 failed
+```
