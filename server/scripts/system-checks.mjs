@@ -35,7 +35,7 @@ async function main() {
   console.log('='.repeat(100));
   console.log(`${body.passed} passed, ${body.failed} failed, ${body.total} total (tag ${body.tag})`);
   // CI floor: a check may be added, but silently removing one must fail the run.
-  const MIN = Number(process.env.MIN_SYSTEM_CHECKS || 33);
+  const MIN = Number(process.env.MIN_SYSTEM_CHECKS || 35);
   if (body.total < MIN) {
     console.error(`expected at least ${MIN} system checks, got ${body.total}`);
     process.exit(1);

@@ -1,5 +1,5 @@
 import express from 'express';
-import { q, tx } from '../db.js';
+import { q, tx, adminTx } from '../db.js';
 import { requireCaller, requireOrgAdmin, isAdmin, hasRole, ROLES } from '../authz.js';
 import { asyncHandler, str, oneOf, isoDate, today, intValue } from '../util.js';
 import { badRequest, conflict, forbidden, notFound } from '../errors.js';
@@ -93,6 +93,26 @@ router.get('/admin/users', asyncHandler(async (req, res) => {
   res.json({ users: users.map((u) => ({ ...u, roles: roles.filter((r) => r.user_id === u.id) })) });
 }));
 
+// Each branch needs two active verifier users so the cash steps (handover,
+// receipt, deposit) can be performed by different people. Admins are warned
+// when a branch has fewer than two.
+router.get('/admin/verifier-coverage', asyncHandler(async (req, res) => {
+  const caller = requireCaller(req);
+  adminOnly(caller);
+  const branches = (await q(
+    `SELECT b.id AS branch_id, b.name, COUNT(DISTINCT ra.user_id)::int AS verifiers
+       FROM org_branches b
+       LEFT JOIN role_assignments ra
+         ON ra.role = 'verifier' AND ra.status = 'active'
+        AND ra.effective_from <= current_date
+        AND (ra.effective_to IS NULL OR ra.effective_to >= current_date)
+        AND (ra.scope_type = 'Org' OR (ra.scope_type = 'Branch' AND ra.scope_id = b.id::text))
+      GROUP BY b.id, b.name
+      ORDER BY b.name`,
+  )).rows;
+  res.json({ minimum: 2, branches, warnings: branches.filter((b) => b.verifiers < 2) });
+}));
+
 router.get('/admin/audit', asyncHandler(async (req, res) => {
   const caller = requireCaller(req);
   adminOnly(caller);
@@ -155,11 +175,11 @@ router.post('/admin/purge-demo', asyncHandler(async (req, res) => {
   requireOrgAdmin(caller);
   await guardOtp(req, 'purge');
   if (req.body.confirm !== 'PURGE DEMO DATA') throw badRequest('Type PURGE DEMO DATA to confirm.');
-  const result = await tx(async (client) => {
-    // The purge deletes across every tenant table by explicit demo id. Running
-    // it under the system switch keeps row-level security from hiding the rows
-    // as the caller's own role/membership rows are removed mid-purge; the
-    // is_demo / demo-id filters below are what limit it to demo data.
+  const result = await adminTx(async (client) => {
+    // The purge deletes across every tenant table by explicit demo id. It runs
+    // as the owner because the API role deliberately has no DELETE on the five
+    // protected identity tables. The is_demo / demo-id filters below are what
+    // limit it to demo data.
     await client.query("SELECT set_config('app.system', 'on', true)");
     // Allows the payment-immutability trigger to remove demo rows only.
     await client.query("SELECT set_config('app.demo_purge', 'on', true)");

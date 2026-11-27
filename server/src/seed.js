@@ -21,6 +21,8 @@ async function main() {
   if (existing.rowCount) { console.log('demo data already present; skipping'); await adminPool.end(); return; }
 
   await adminTx(async (c) => {
+    // The seed is one of the two paths allowed to set is_demo.
+    await c.query("SELECT set_config('app.seed', 'on', true)");
     // ---- reference data ----
     await c.query(`INSERT INTO group_type_configs (type, label, categories, flags) VALUES
       ('VSLA','Village Savings and Loan Association','["savings","shares","social_fund","fines","subscriptions","loan_repayment"]','{"meetings":true,"shares":true}'),
@@ -33,7 +35,7 @@ async function main() {
     const branchKla = (await c.query("INSERT INTO org_branches (name, district, code, is_demo, demo_batch) VALUES ('Kampala Central','Kampala','KLA',$1,$2) RETURNING *", [true, BATCH])).rows[0];
     const branchMbr = (await c.query("INSERT INTO org_branches (name, district, code, is_demo, demo_batch) VALUES ('Mbarara','Mbarara','MBR',$1,$2) RETURNING *", [true, BATCH])).rows[0];
 
-    const pwd = hashPassword(PASSWORD);
+    const pwd = await hashPassword(PASSWORD);
     const mkUser = async (email, name) => (await c.query(
       `INSERT INTO users (email, password_hash, full_name, is_demo) VALUES ($1,$2,$3,true)
        ON CONFLICT (email) DO UPDATE SET password_hash=EXCLUDED.password_hash, full_name=EXCLUDED.full_name, status='active', is_demo=true

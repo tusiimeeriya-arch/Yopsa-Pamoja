@@ -8,7 +8,7 @@ import { hashPassword } from './auth.js';
  *   ADMIN_EMAIL=you@yopsa.co.ug ADMIN_PASSWORD='...' npm run create-admin
  *
  * There is no default account and no default password. The password must be
- * supplied (or typed when prompted) and is stored only as a scrypt hash.
+ * supplied (or typed when prompted) and is stored only as an Argon2id hash.
  * The role grant is written to the audit log as a bootstrap event.
  */
 function strongEnough(password) {
@@ -63,12 +63,12 @@ async function main() {
     if (existing) {
       userId = existing.id;
       await client.query('UPDATE users SET password_hash=$2, full_name=$3, status=$4, failed_attempts=0, locked_until=NULL WHERE id=$1',
-        [userId, hashPassword(password), name, 'active']);
+        [userId, await hashPassword(password), name, 'active']);
       console.log(`Updated the password for existing user ${email}.`);
     } else {
       userId = (await client.query(
         'INSERT INTO users (email, password_hash, full_name, status) VALUES ($1,$2,$3,$4) RETURNING id',
-        [email, hashPassword(password), name, 'active'],
+        [email, await hashPassword(password), name, 'active'],
       )).rows[0].id;
       console.log(`Created user ${email}.`);
     }

@@ -95,4 +95,29 @@ SELECT count(*) AS other_group_persons FROM persons
 ROLLBACK;
 
 \echo ''
+\echo '== 5. app role cannot DELETE or TRUNCATE the five protected tables =='
+SELECT t AS table_name,
+       has_table_privilege(current_user, t, 'DELETE') AS can_delete,
+       has_table_privilege(current_user, t, 'TRUNCATE') AS can_truncate
+  FROM (VALUES ('users'),('persons'),('groups'),('memberships'),('role_assignments')) AS v(t);
+
+\echo '-- is_demo cannot be flipped on a real row (must be refused):'
+BEGIN;
+SELECT set_config('app.user_id', (SELECT id::text FROM users WHERE email='admin@yopsa.demo'), false);
+INSERT INTO users (id, email, password_hash, full_name, is_demo)
+VALUES ('33333333-3333-3333-3333-333333333333', 'proof-real@selftest.invalid', 'not-a-real-hash', 'Proof real row', false);
+SAVEPOINT d1;
+UPDATE users SET is_demo=true WHERE id='33333333-3333-3333-3333-333333333333';
+ROLLBACK TO SAVEPOINT d1;
+\echo '-- DELETE on users must be refused by privilege:'
+SAVEPOINT d2;
+DELETE FROM users WHERE id='33333333-3333-3333-3333-333333333333';
+ROLLBACK TO SAVEPOINT d2;
+\echo '-- TRUNCATE on users must be refused by privilege:'
+SAVEPOINT d3;
+TRUNCATE users;
+ROLLBACK TO SAVEPOINT d3;
+ROLLBACK;
+
+\echo ''
 \echo '== done =='

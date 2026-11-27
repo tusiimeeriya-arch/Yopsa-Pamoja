@@ -50,6 +50,9 @@ value listed here — never a constant buried in code.
 | A-038 | `org.branch_assignment` | A group may move branch; the move is dated and audited, never rewritten | Report reproducibility | Management | Proposed |
 | A-039 | `learning.completion` | Completion never clears arrears and never changes lending eligibility | Learning integrity | Management | Fixed by the brief |
 | A-040 | `support.assisted_actions` | Assisted actions record the acting staff member and the member's confirmation method (verbal, written, OTP) | Assisted service evidence | Management | Proposed |
+| A-041 | `cash.verifier_coverage` | At least two active verifier users per branch; the Administration overview warns when a branch has fewer | Who may perform the receipt and deposit steps of the cash path, so one person cannot do both | Management + Finance | Proposed |
+
+**Cash verifier coverage.** Each branch needs at least two active verifier users for the cash steps (handover, receipt, deposit). The app warns administrators on the Administration overview when a branch has fewer than two.
 
 ## How these are applied
 
