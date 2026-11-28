@@ -8,14 +8,26 @@
  * mounted outside production; in production this script is the only way to run
  * the checks.
  *
- *   DATABASE_URL=... ADMIN_DATABASE_URL=... node scripts/system-checks.mjs
+ *   ADMIN_DATABASE_URL=... node scripts/system-checks.mjs
+ *
+ * The application-role connection is derived from ADMIN_DATABASE_URL (override
+ * with CHECK_DATABASE_URL); see quiet-session.mjs.
  *
  * The checks run with the identity of an active organisation administrator so
  * row-level security behaves exactly as it does for the API.
  */
-import { als, pool } from '../src/db.js';
-import { adminPool } from '../src/owner.js';
-import { runSystemChecks } from '../src/services/checks.js';
+import { quietAppUrl } from './quiet-session.mjs';
+
+// Must happen before db.js builds its pool. The checks deliberately trip
+// guards, and a run would otherwise leave one ERROR block per refusal in the
+// database log; this keeps the SQL on the application role but silences
+// server-side error logging for the session (see quiet-session.mjs).
+const quiet = quietAppUrl();
+if (quiet) process.env.DATABASE_URL = quiet;
+
+const { als, pool } = await import('../src/db.js');
+const { adminPool } = await import('../src/owner.js');
+const { runSystemChecks } = await import('../src/services/checks.js');
 
 async function main() {
   const admin = (await adminPool.query(

@@ -719,3 +719,47 @@ DATABASE PROOFS:      pamoja_app is_superuser=f bypasses_rls=f;
                       is_demo immutability and DELETE/TRUNCATE all refused
 UNIT TESTS:           4 passed, 0 failed
 ```
+
+## 12. Expected rejections kept out of the database log (validation repair)
+
+The Pass 4 re-run left 69 `ERROR` lines in the `db` service log. Each one is a
+refusal a system check asserts on purpose:
+
+```
+ERROR:  allocation of 30000 would make the total 110000 exceed the receipt of 100000
+ERROR:  payment entry 3f2a97bf-... is locked: amount, member, category and date cannot be edited
+ERROR:  permission denied for table audit_logs / persons / memberships / groups / role_assignments / users
+ERROR:  is_demo is immutable after insert; only the seed or system path may set it
+ERROR:  duplicate key value violates unique constraint "attendance_records_meeting_id_person_id_key"
+ERROR:  duplicate key value violates unique constraint "receipts_source_ref_key"
+```
+
+They are the guards working, but PostgreSQL logs every ERROR server-side, so a
+verification run made the application log read like a fault. The check suites now
+open their connection through the owner URL with the session switched to the
+application role and server-side error logging off
+(`server/scripts/quiet-session.mjs`):
+
+```
+current_user=pamoja_app  session_user=pamoja  log_min_messages=fatal
+SET log_min_messages -> 42501 permission denied to set parameter  (still the app role)
+DELETE FROM users    -> 42501 permission denied for table users
+```
+
+### 12.1 Re-run after the change
+
+```
+IN-APP SYSTEM CHECKS: 35 passed, 0 failed, 35 total (tag SELFTEST-1795833849481)
+NEGATIVE TESTS:       13 passed, 0 failed
+TEST DATA SAFETY:     demo_groups 5 -> 5, demo_payment_entries 19 -> 19,
+                      demo_receipts 4 -> 4, demo_loans 14 -> 14,
+                      demo_roles 13 -> 13, audit_rows 78 -> 85
+docker compose logs --since <run start> db   -> (no output)
+```
+
+### 12.2 Transient module error
+
+`Cannot find package 'hash-wasm' imported from /workspace/src/argonWorker.js`
+(`02:37:54`) came from the running dev server picking up the new
+`argonWorker.js` before `npm ci` had installed the package. The module is
+present now and a real sign-in through the API succeeds; no occurrence since.
