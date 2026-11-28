@@ -53,7 +53,7 @@ jobs:
       # CI floors: a check or test may be added, but silently removing one must
       # fail the run.
       MIN_SYSTEM_CHECKS: '35'
-      MIN_NEGATIVE_TESTS: '12'
+      MIN_NEGATIVE_TESTS: '13'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,15 +69,21 @@ jobs:
             server/package-lock.json
             web/package-lock.json
 
-      - name: Apply the schema as the owner
-        run: psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f server/src/schema.sql
+      - name: Install API dependencies
+        working-directory: server
+        run: npm ci --no-audit --no-fund
+
+      - name: Apply migrations as the owner
+        working-directory: server
+        run: npm run migrate
 
       - name: Set the application role password
         run: psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER ROLE pamoja_app PASSWORD 'pamoja_app_dev_password'"
 
-      - name: Install API dependencies
-        working-directory: server
-        run: npm ci --no-audit --no-fund
+      - name: Schema snapshot matches the migrations
+        run: |
+          ./scripts/build-schema.sh
+          git diff --exit-code server/src/schema.sql
 
       - name: Seed demo data
         working-directory: server
@@ -103,6 +109,9 @@ jobs:
       - name: Negative tests
         working-directory: server
         run: node scripts/negative-tests.mjs
+
+      - name: Old-schema upgrade matches a fresh schema
+        run: ./scripts/schema-diff.sh
 
       - name: API log
         if: always()

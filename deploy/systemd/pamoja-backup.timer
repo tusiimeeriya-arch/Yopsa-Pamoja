@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Pamoja encrypted database backup
+After=pamoja-backup.service
+
+[Timer]
+OnCalendar=*-*-* 02:15:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

@@ -598,7 +598,11 @@ export async function runSystemChecks(actor) {
       const peopleOk = dash.cards.members.people === dbMembers.people && dash.cards.members.memberships === dbMembers.rows;
       const flowsOk = f.submitted.count >= f.verified.count && f.verified.count >= f.posted.count
         && dash.cards.totalPayable.principal === dash.cards.outstandingPrincipal;
-      const overdueOk = g31?.excluded === true && g30?.excluded === false;
+      // The rule, not a fixed seed age: a group is excluded exactly when its
+      // oldest overdue loan is more than 30 days old. Demo data ages with the
+      // clock, so asserting today's exact day counts would fail tomorrow.
+      const followsRule = (g) => Boolean(g) && g.excluded === (g.metrics.maxOverdue > 30);
+      const overdueOk = followsRule(g31) && followsRule(g30);
       const topOk = dash.cards.topTen.length <= 10;
       const detail = `people=${dash.cards.members.people}/${dbMembers.people} memberships=${dash.cards.members.memberships}/${dbMembers.rows} flows=${f.submitted.count}/${f.verified.count}/${f.posted.count} top=${dash.cards.topTen.length} 31d=${g31?.metrics.maxOverdue}:${g31?.excluded} 30d=${g30?.metrics.maxOverdue}:${g30?.excluded}`;
       return peopleOk && flowsOk && overdueOk && topOk

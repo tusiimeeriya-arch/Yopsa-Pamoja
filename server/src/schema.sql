@@ -1,3 +1,11 @@
+-- GENERATED FILE - do not edit by hand.
+-- Source of truth: server/migrations/*.sql
+-- Regenerate with: scripts/build-schema.sh
+
+-- ===== 0001_core.sql =====
+-- 0001_core.sql — tables, indexes and reference data.
+-- Generated from the P1 schema; applied once by src/migrate.js.
+
 -- Yopsa Pamoja schema. Whole-UGX BIGINT money, timestamptz in UTC.
 -- Every object belongs to the public schema, whatever search_path the applying
 -- role carries by default.
@@ -652,6 +660,11 @@ CREATE TABLE IF NOT EXISTS job_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs(job, started_at DESC);
 
+
+-- ===== 0002_invariants.sql =====
+-- 0002_invariants.sql — database-enforced invariants, row-level security,
+-- the least-privilege application role and its privileges.
+
 -- ===========================================================================
 -- Database-enforced invariants. The application is the only client, but these
 -- hold even for raw SQL executed by the application role.
@@ -976,7 +989,7 @@ DO $$ BEGIN
     CREATE ROLE pamoja_web LOGIN PASSWORD 'pamoja_web_dev_password';
   END IF;
 END $$;
-GRANT CONNECT ON DATABASE pamoja TO pamoja_app;
+DO $$ BEGIN EXECUTE format('GRANT CONNECT ON DATABASE %I TO pamoja_app', current_database()); END $$;
 GRANT USAGE ON SCHEMA public TO pamoja_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO pamoja_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO pamoja_app;
@@ -993,3 +1006,4 @@ GRANT SELECT, INSERT ON audit_logs TO pamoja_app;
 -- the one path that removes demo rows.
 REVOKE DELETE, TRUNCATE ON users, persons, groups, memberships, role_assignments FROM pamoja_app;
 REVOKE DELETE, TRUNCATE ON users, persons, groups, memberships, role_assignments FROM pamoja_web;
+

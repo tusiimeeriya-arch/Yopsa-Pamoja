@@ -72,3 +72,20 @@ least-privilege role but the expected refusals are no longer logged server-side.
 | 2 | Same checks, same verdicts, clean log | done | `IN-APP SYSTEM CHECKS: 35 passed, 0 failed, 35 total`; `NEGATIVE TESTS: 13 passed, 0 failed`; safety `demo_groups 5→5, demo_payment_entries 19→19, demo_receipts 4→4, demo_loans 14→14, demo_roles 13→13, audit_rows 78→85`; `docker compose logs --since <run start> db` → no output for both runs (previously 69 ERROR lines). |
 | 3 | Transient `hash-wasm` module error | resolved | `02:37:54 Cannot find package 'hash-wasm'` came from the previous turn's dependency addition: the running dev server served a login before `npm ci` installed the new package. Now `require.resolve('hash-wasm')` → `/workspace/node_modules/hash-wasm/dist/index.umd.js` and a real sign-in through the API succeeds; no occurrence since. |
 | 4 | API survives a database restart | done | Recreating the `db` container used to kill the API: pg emits the dropped idle client on the pool, and with no `'error'` listener the process exited (`Failed running 'src/index.js'. Waiting for file changes`). `server/src/db.js` now logs it (`{"level":"error","message":"idle database client error","detail":"terminating connection due to administrator command"}`); after a forced `db` recreate `web=200 api=200` and the process stayed up. |
+
+## Pass 6 — Staging deployment to Vultr (branch `deploy-staging`)
+
+Staging only in this pass. Production steps are written but not executed.
+Secrets never enter the repo or this log: `/opt/pamoja/.env.production` is
+created on the server by the operator.
+
+### Gate (must be on `main` before deployment work)
+
+| # | Item | Status | Evidence |
+|---|------|--------|----------|
+| a | Seed dates relative; checks pass with the clock at +1, +31, +100 days | done | `server/src/seed.js` derives every date from `today()`/`addDays()`; `SEED_ANCHOR_DAYS_AGO` anchors the seed N days back so today's run is the same as checking it N days later. `scripts/clock-proof.sh` at 1/31/100: `IN-APP SYSTEM CHECKS: 35 passed, 0 failed, 35 total` and `NEGATIVE TESTS: 13 passed, 0 failed` each time. One real fix was needed: `dashboard_totals` asserted the seed's exact overdue day counts; it now asserts the ranking rule (`excluded === maxOverdue > 30`), so it stays true as data ages. New CI job `clock` runs the matrix. |
+| b | Versioned migrations + in-place upgrade equals a fresh schema, with triggers, policies and privileges; enforced in CI | done | `server/migrations/0001_core.sql` + `0002_invariants.sql`; `server/src/migrate.js` keeps `pamoja_migrations.schema_migrations` (version + SHA-256 checksum, refuses an edited applied file); `npm run migrate`. `scripts/schema-diff.sh`: fresh vs 0001-only-then-upgrade → `schema diff: identical (1219 normalized lines)`, `triggers: 15`, `policies: 27`, `app cannot update audit_logs: f`, `app cannot delete users: f`, `audit append-only trigger: 1`. CI runs the same script and fails if `server/src/schema.sql` drifts from the migrations. |
+| c | `MIN_NEGATIVE_TESTS` in CI is 13 | done | `.github/workflows/verify.yml: MIN_NEGATIVE_TESTS: '13'`; script default raised from 12 to 13. The 13th test (`app.seed`/`app.system` cannot be enabled over HTTP) was already present and passes. |
+
+| # | Item | Status | Evidence |
+|---|------|--------|----------|

@@ -7,7 +7,12 @@ import { isProduction } from './env.js';
 
 const BATCH = 'DEMO-2026-11';
 const PASSWORD = process.env.DEMO_PASSWORD || 'PamojaDemo#2026';
-const iso = (daysAgo) => addDays(today(), -daysAgo);
+// CI clock proof: anchor every relative date N days in the past, so running the
+// checks today is equivalent to checking the demo data N days after it was
+// created. The demo seed never runs in production, so this affects tests only.
+const ANCHOR_DAYS_AGO = Math.max(0, Math.floor(Number(process.env.SEED_ANCHOR_DAYS_AGO || 0)));
+const anchorToday = () => (ANCHOR_DAYS_AGO ? addDays(today(), -ANCHOR_DAYS_AGO) : today());
+const iso = (daysAgo) => addDays(anchorToday(), -daysAgo);
 const ts = (daysAgo, hour = 10) => iso(daysAgo) + `T${String(hour).padStart(2, '0')}:00:00Z`;
 
 function pick(seed, n) { return Math.abs(Math.sin(seed * 99991) * 10000) % n; }
@@ -178,7 +183,7 @@ async function main() {
     await c.query(
       `INSERT INTO action_items (meeting_id, group_id, title, owner_person_id, deadline, created_by)
        VALUES ($1,$2,'Collect outstanding savings from three members',$3,$4,$5)`,
-      [meetingIds[g1.id][1].id, g1.id, g1m[1].person.id, addDays(today(), 3), secretary.id],
+      [meetingIds[g1.id][1].id, g1.id, g1m[1].person.id, addDays(anchorToday(), 3), secretary.id],
     );
 
     // payments: group 1 shortage, group 2 posting failure, group 3 posted
@@ -217,7 +222,7 @@ async function main() {
     await c.query(
       `INSERT INTO member_loans (group_id, lender_person_id, borrower_person_id, amount, purpose, agreed_on, due_on, witness_person_id, recorded_by)
        VALUES ($1,$2,$3,50000,'School fees between members',$4,$5,$6,$7)`,
-      [g1.id, g1m[3].person.id, g1m[4].person.id, iso(9), addDays(today(), 30), g1m[1].person.id, treasurer.id],
+      [g1.id, g1m[3].person.id, g1m[4].person.id, iso(9), addDays(anchorToday(), 30), g1m[1].person.id, treasurer.id],
     );
 
     const g2 = groups[1];
@@ -247,7 +252,7 @@ async function main() {
     await c.query(
       `INSERT INTO finance_exceptions (kind, entity, entity_id, detail, owner_user_id, deadline)
        VALUES ('posting_failure','GroupSubmission',$1,'Verified submission could not be posted to the ledger.',$2,$3)`,
-      [sub2.id, verifier.id, addDays(today(), 1)],
+      [sub2.id, verifier.id, addDays(anchorToday(), 1)],
     );
 
     const g3 = groups[2];
@@ -328,7 +333,7 @@ async function main() {
     for (const [title, category, kind, body] of learning) {
       await c.query(
         "INSERT INTO learning_items (title, category, language, version, content_owner, review_date, kind, url, body, is_demo) VALUES ($1,$2,'English',1,'Yopsa Training',$3,$4,NULL,$5,true)",
-        [title, category, addDays(today(), 180), kind, body],
+        [title, category, addDays(anchorToday(), 180), kind, body],
       );
     }
     const firstLearning = (await c.query('SELECT id FROM learning_items ORDER BY title LIMIT 1')).rows[0];
@@ -360,9 +365,9 @@ async function main() {
         [myEntry.id, g1.id, g1m[3].person.id, member.id, verifier.id],
       );
     }
-    await c.query("INSERT INTO tasks (title, owner_user_id, deadline, linked_entity, linked_id, status, is_demo) VALUES ('Follow up the 20,000 savings difference',$1,$2,'GroupSubmission',$3,'open',true)", [verifier.id, addDays(today(), 2), sub1.id]);
-    await c.query("INSERT INTO tasks (title, owner_user_id, deadline, linked_entity, linked_id, status, is_demo) VALUES ('Review the posting exception for Nkumba Investment Club',$1,$2,'GroupSubmission',$3,'open',true)", [verifier.id, addDays(today(), 1), sub2.id]);
-    await c.query("INSERT INTO notifications (user_id, title, body, deadline, dedupe_key) VALUES ($1,'Demo data loaded','Explore the demo guide under Admin. This banner disappears when demo data is purged.',$2,'demo-welcome')", [admin.id, addDays(today(), 7)]);
+    await c.query("INSERT INTO tasks (title, owner_user_id, deadline, linked_entity, linked_id, status, is_demo) VALUES ('Follow up the 20,000 savings difference',$1,$2,'GroupSubmission',$3,'open',true)", [verifier.id, addDays(anchorToday(), 2), sub1.id]);
+    await c.query("INSERT INTO tasks (title, owner_user_id, deadline, linked_entity, linked_id, status, is_demo) VALUES ('Review the posting exception for Nkumba Investment Club',$1,$2,'GroupSubmission',$3,'open',true)", [verifier.id, addDays(anchorToday(), 1), sub2.id]);
+    await c.query("INSERT INTO notifications (user_id, title, body, deadline, dedupe_key) VALUES ($1,'Demo data loaded','Explore the demo guide under Admin. This banner disappears when demo data is purged.',$2,'demo-welcome')", [admin.id, addDays(anchorToday(), 7)]);
 
     console.log('demo seed complete');
   });

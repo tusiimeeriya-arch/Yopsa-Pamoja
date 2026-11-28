@@ -1,0 +1,62 @@
+# Pamoja production edge.
+#
+# The only service that publishes ports is Caddy. It terminates TLS with an
+# automatic Let's Encrypt certificate obtained through the HTTP-01 challenge,
+# redirects HTTP to HTTPS (automatic HTTPS), and proxies /api to the API and
+# everything else to the web container.
+#
+# PAMOJA_DOMAIN is the only value required from the environment. For staging it
+# is pamoja-staging.duckdns.org; production must use a Yopsa-owned domain.
+
+{
+	admin off
+	# Structured JSON logs go to the container log, which Docker rotates.
+	log {
+		output stderr
+		format json
+	}
+}
+
+{$PAMOJA_DOMAIN} {
+	# route preserves this order: block first, then proxy.
+	route {
+	encode gzip zstd
+
+	# The API accepts JSON bodies up to 10 MB; anything larger is refused at
+	# the edge instead of being buffered by the application.
+	request_body {
+		max_size 10MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), camera=(), microphone=()"
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'self'"
+		-Server
+	}
+
+	# Repository and operational paths are never public. Demo tooling is
+	# mounted only outside production, and production must answer 404 even if
+	# a future build mounts it by mistake.
+	@blocked path /.git/* /.env* /deploy/* /server/* /scripts/* /docs/* /backup/* /api/admin/purge-demo /api/admin/system-checks /api/admin/demo-guide
+	respond @blocked 404
+
+	handle /health {
+		rewrite * /api/health
+		reverse_proxy api:8080
+	}
+	handle /ready {
+		rewrite * /api/ready
+		reverse_proxy api:8080
+	}
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+	handle {
+		reverse_proxy web:8080
+	}
+	}
+}

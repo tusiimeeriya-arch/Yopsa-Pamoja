@@ -1,5 +1,5 @@
 import express from 'express';
-import { ready, als } from './db.js';
+import { ready, als, pool } from './db.js';
 import { AppError } from './errors.js';
 import { attachCaller } from './authz.js';
 import { isProduction } from './env.js';
@@ -13,6 +13,16 @@ import { router as dashboardRouter } from './routes/dashboard.js';
 import { router as supportRouter } from './routes/support.js';
 import { router as adminRouter } from './routes/admin.js';
 import { assertSchedulerConfig, startScheduler } from './scheduler.js';
+import { assertProductionConfig } from './prodGuards.js';
+
+// Fail closed before the server exists: a production process with a development
+// secret, OTP_ON_SCREEN, an owner credential or a weak DB password must not run.
+try {
+  assertProductionConfig();
+} catch (err) {
+  console.error(JSON.stringify({ level: 'error', message: 'refusing to start', reason: err.message, problems: err.problems }));
+  process.exit(1);
+}
 
 const app = express();
 const PORT = Number(process.env.PORT || 8080);
@@ -46,6 +56,18 @@ function rateLimit(key, max, windowMs) {
 app.get('/api/health', async (req, res) => {
   const db = await ready().catch(() => false);
   res.status(db ? 200 : 503).json({ status: db ? 'ok' : 'degraded', database: db, time: new Date().toISOString() });
+});
+
+// Readiness: the database answers and the P1 tables exist. Kept separate from
+// /api/health so a load balancer can distinguish "process up" from "usable".
+app.get('/api/ready', async (req, res) => {
+  try {
+    const r = await pool.query("select to_regclass('public.users') is not null as schema, now() as at");
+    const ok = r.rows[0].schema === true;
+    res.status(ok ? 200 : 503).json({ status: ok ? 'ready' : 'not-ready', database: true, schema: ok, time: r.rows[0].at });
+  } catch {
+    res.status(503).json({ status: 'not-ready', database: false, schema: false });
+  }
 });
 
 app.get('/api/public/config', (req, res) => {
@@ -117,7 +139,10 @@ app.use((err, req, res, next) => {
   else if (!err.status && err.code === '23514') { status = 409; message = err.message; }
   else if (!err.status && err.code === '42501') { status = 403; message = 'That change is not permitted.'; }
   if (status >= 500) console.error(JSON.stringify({ level: 'error', message: err.message, stack: isProduction() ? undefined : err.stack, path: req.path }));
-  res.status(status).json({ error: { code: err.code || 'INTERNAL', message: status >= 500 ? 'Something went wrong. Try again.' : message, ...(err.details ? { details: err.details } : {}) } });
+  // A missing messaging provider is an expected, actionable state: the caller
+  // must see the clear message, not a generic 500. Other 5xx stay opaque.
+  const actionable = err.code === 'OTP_DELIVERY_UNAVAILABLE';
+  res.status(status).json({ error: { code: err.code || 'INTERNAL', message: status >= 500 && !actionable ? 'Something went wrong. Try again.' : message, ...(err.details ? { details: err.details } : {}) } });
 });
 
 // Refuse to boot a production process whose job intervals are below the floor.
