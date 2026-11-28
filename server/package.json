@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "migrate": "node src/migrate.js",
     "seed": "node src/seed.js",
     "create-admin": "node src/createAdmin.js",
     "test": "node --test test/*.test.js"

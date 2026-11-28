@@ -4,11 +4,17 @@
 |---|---|
 | `docker-compose.dev.yml` | Local developer stack: PostgreSQL 16, baseline migration, API on `localhost:8080`, worker |
 | `.env.example` | Every environment variable, with the ones the P0 build reads marked clearly |
+| `docker-compose.prod.yml` | The deployed stack: Caddy edge, nginx SPA, API, PostgreSQL, one-shot `migrate` and `backup` |
+| `.env.production.example` | The environment file the operator creates at `/opt/pamoja/.env.production` (empty values only) |
+| `Caddyfile` | TLS, HTTP→HTTPS, security headers, path blocks, `/api` and `/health` proxying |
+| `api.Dockerfile`, `web.Dockerfile`, `caddy.Dockerfile`, `backup.Dockerfile` | Release images, pinned, unprivileged |
+| `web-nginx.conf` | SPA routing and cache rules for the web image |
+| `systemd/` | Backup and monitoring timers |
+| `terraform/` | Illustrative Vultr instance definition — **never applied**, documentation only |
 
-Production assets — `docker-compose.prod.yml`, `Caddyfile`, backup and restore
-scripts, optional Kubernetes manifests — land in P10 together with the
-[OPERATIONS_RUNBOOK](../docs/README.md). They are deliberately not scaffolded
-here: a production compose that has never been booted would be a false promise.
+The deployment runbook is [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md): staging
+steps S1–S11, production steps P1–P8, rollback, rotation and incident response.
+Operational scripts live in [scripts/](../scripts).
 
 ## Local quick start
 

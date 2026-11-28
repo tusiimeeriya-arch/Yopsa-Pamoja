@@ -183,11 +183,11 @@ export function requireStepUp(caller, minutes = 5) {
  */
 export async function requestOtp(caller, purpose) {
   const p = str(purpose, 'Purpose', { max: 40 });
-  // In production the code must reach the person through a real provider. The
-  // stub records messages instead of sending them, so production fails closed
-  // rather than handing a code to nobody (or to the API response).
-  if (isProduction() && MESSAGE_PROVIDER === 'stub') {
-    throw new AppError(503, 'OTP_DELIVERY_UNAVAILABLE', 'Confirmation codes cannot be delivered until an SMS provider is configured.');
+  // Without a real provider the code cannot reach the person. Fail closed with
+  // a clear message instead of handing a code to nobody (or to the API
+  // response). The local sandbox opts in explicitly with OTP_ON_SCREEN=1.
+  if (MESSAGE_PROVIDER === 'stub' && process.env.OTP_ON_SCREEN !== '1') {
+    throw new AppError(503, 'OTP_DELIVERY_UNAVAILABLE', 'Confirmation codes cannot be delivered until an SMS or email provider is configured. Contact an administrator.');
   }
   const recent = Number((await q(
     "SELECT COUNT(*) AS n FROM otp_codes WHERE user_id=$1 AND purpose=$2 AND created_at > now() - interval '15 minutes'",
@@ -203,12 +203,19 @@ export async function requestOtp(caller, purpose) {
   );
   const person = (await q('SELECT phone FROM persons WHERE linked_user_id=$1 AND phone IS NOT NULL LIMIT 1', [caller.user.id])).rows[0];
   const recipient = person?.phone || caller.user.email;
-  const delivery = await sendMessage({
-    channel: 'sms',
-    recipient,
-    body: `Pamoja confirmation code for ${p.replace(/_/g, ' ')}: ${code}. It expires in ${OTP_TTL_MINUTES} minutes.`,
-    userId: caller.user.id,
-  });
+  let delivery;
+  try {
+    delivery = await sendMessage({
+      channel: 'sms',
+      recipient,
+      body: `Pamoja confirmation code for ${p.replace(/_/g, ' ')}: ${code}. It expires in ${OTP_TTL_MINUTES} minutes.`,
+      userId: caller.user.id,
+    });
+  } catch {
+    // The provider failed. Never return the code; tell the caller to retry or
+    // contact an administrator.
+    throw new AppError(503, 'OTP_DELIVERY_UNAVAILABLE', 'Confirmation codes cannot be delivered right now. Try again shortly or contact an administrator.');
+  }
   // The stub cannot deliver a real SMS. Only a local sandbox with
   // OTP_ON_SCREEN=1 gets the code back; everywhere else it is never returned.
   return {

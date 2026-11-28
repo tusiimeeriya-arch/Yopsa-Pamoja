@@ -1,0 +1,14 @@
+[Unit]
+Description=Pamoja encrypted database backup
+Documentation=file:/opt/pamoja/app/docs/DEPLOYMENT.md
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pamoja-deploy
+Group=pamoja-deploy
+WorkingDirectory=/opt/pamoja/app
+ExecStart=/usr/bin/docker compose --project-name pamoja --env-file /opt/pamoja/.env.production -f /opt/pamoja/app/deploy/docker-compose.prod.yml run --rm -T backup
+TimeoutStartSec=30min
+Nice=10

@@ -380,7 +380,7 @@ async function run() {
   }
   console.log('='.repeat(100));
   // CI floor: a test may be added, but silently removing one must fail the run.
-  const MIN_TESTS = Number(process.env.MIN_NEGATIVE_TESTS || 12);
+  const MIN_TESTS = Number(process.env.MIN_NEGATIVE_TESTS || 13);
   if (results.length < MIN_TESTS) {
     console.error(`expected at least ${MIN_TESTS} negative tests, got ${results.length}`);
   }

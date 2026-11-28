@@ -1,0 +1,14 @@
+[Unit]
+Description=Pamoja operational checks (disk, certificate, jobs, audit chain, backup age)
+Documentation=file:/opt/pamoja/app/docs/DEPLOYMENT.md
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pamoja-deploy
+Group=pamoja-deploy
+WorkingDirectory=/opt/pamoja/app
+Environment=BASE_URL=https://pamoja-staging.duckdns.org
+ExecStart=/bin/bash /opt/pamoja/app/scripts/monitor.sh
+TimeoutStartSec=10min

@@ -1,0 +1,239 @@
+# Pamoja production stack — staging first.
+#
+#   docker compose --env-file /opt/pamoja/.env.production \
+#     -f deploy/docker-compose.prod.yml up -d
+#
+# Only Caddy publishes ports (80/443). PostgreSQL has no published port and
+# lives on an internal network. The API connects as pamoja_app; the owner role
+# is used only by the one-shot migrate service. Every image is pinned.
+#
+# Sized for a 2 vCPU / 4 GB Vultr instance: PostgreSQL 1 GB, API 768 MB,
+# web 256 MB, Caddy 256 MB, backup 512 MB (only while it runs).
+
+name: pamoja
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  logging: *logging
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16.9-alpine
+    <<: *hardening
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pamoja-pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+    shm_size: 256mb
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 200
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    image: ${API_IMAGE:-pamoja-api:local}
+    <<: *hardening
+    restart: "no"
+    environment:
+      NODE_ENV: production
+      APP_ENV: production
+      ADMIN_DATABASE_URL: ${ADMIN_DATABASE_URL:?set ADMIN_DATABASE_URL}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD}
+    command: ["node", "src/migrate.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+    cpus: 0.5
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    image: ${API_IMAGE:-pamoja-api:local}
+    <<: *hardening
+    environment:
+      NODE_ENV: production
+      APP_ENV: production
+      PORT: "8080"
+      # pamoja_app only. ADMIN_DATABASE_URL is deliberately absent: the API
+      # refuses to start if an owner credential is present.
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?set AUTH_TOKEN_SECRET}
+      PAMOJA_MASTER_KEY: ${PAMOJA_MASTER_KEY:?set PAMOJA_MASTER_KEY}
+      PAMOJA_LOOKUP_KEY: ${PAMOJA_LOOKUP_KEY:-}
+      ESCALATION_JOB_SECONDS: ${ESCALATION_JOB_SECONDS:-3600}
+      RANKING_JOB_SECONDS: ${RANKING_JOB_SECONDS:-86400}
+      SMS_PROVIDER: ${SMS_PROVIDER:-stub}
+      SMS_HTTP_URL: ${SMS_HTTP_URL:-}
+      SMS_HTTP_TOKEN: ${SMS_HTTP_TOKEN:-}
+      SMS_HTTP_FROM: ${SMS_HTTP_FROM:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - edge
+      - internal
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 768m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+    image: ${WEB_IMAGE:-pamoja-web:local}
+    <<: *hardening
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - edge
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  caddy:
+    build:
+      context: ..
+      dockerfile: deploy/caddy.Dockerfile
+    image: ${CADDY_IMAGE:-pamoja-caddy:local}
+    <<: *hardening
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      PAMOJA_DOMAIN: ${PAMOJA_DOMAIN:?set PAMOJA_DOMAIN}
+      # Staging only: "on" opens the read-only admin demo guide for the seeded
+      # synthetic accounts. Unset in production, where the path answers 404.
+      PAMOJA_DEMO_TOOLING: ${PAMOJA_DEMO_TOOLING:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    networks:
+      - edge
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 80 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  backup:
+    build:
+      context: ..
+      dockerfile: deploy/backup.Dockerfile
+    image: ${BACKUP_IMAGE:-pamoja-backup:local}
+    <<: *hardening
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:?set POSTGRES_DB}
+      PGUSER: ${POSTGRES_USER:?set POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:?set BACKUP_S3_ENDPOINT}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:-fra}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:?set BACKUP_S3_BUCKET}
+      BACKUP_S3_ACCESS_KEY: ${BACKUP_S3_ACCESS_KEY:?set BACKUP_S3_ACCESS_KEY}
+      BACKUP_S3_SECRET_KEY: ${BACKUP_S3_SECRET_KEY:?set BACKUP_S3_SECRET_KEY}
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:?set BACKUP_AGE_RECIPIENT}
+      BACKUP_PREFIX: ${BACKUP_PREFIX:-pamoja}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+      BACKUP_RETENTION_WEEKS: ${BACKUP_RETENTION_WEEKS:-4}
+      BACKUP_RETENTION_MONTHS: ${BACKUP_RETENTION_MONTHS:-6}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+    volumes:
+      - ../scripts/backup.sh:/scripts/backup.sh:ro
+      - ../scripts/restore-drill.sh:/scripts/restore-drill.sh:ro
+      - backup-logs:/var/log/pamoja
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+      - egress
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+    cpus: 0.5
+
+networks:
+  edge:
+  internal:
+    internal: true
+  egress:
+
+volumes:
+  pamoja-pgdata:
+  caddy-data:
+  caddy-config:
+  backup-logs:
