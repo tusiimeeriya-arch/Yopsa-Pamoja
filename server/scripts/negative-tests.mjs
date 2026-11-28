@@ -8,13 +8,16 @@
  *   docker compose run --rm --no-deps verify node scripts/negative-tests.mjs
  */
 import pg from 'pg';
+import { quietAppUrl } from './quiet-session.mjs';
 
 const BASE = process.env.API_BASE || 'http://api:8080/api';
 const PASSWORD = process.env.DEMO_PASSWORD || 'PamojaDemo#2026';
 const owner = new pg.Client({ connectionString: process.env.ADMIN_DATABASE_URL || process.env.DATABASE_URL });
 // A separate connection as the least-privilege application role, used to prove
-// that no HTTP request left app.system switched on for the API's own pool.
-const appDb = new pg.Client({ connectionString: process.env.DATABASE_URL });
+// that no HTTP request left app.system switched on for the API's own pool. The
+// probes on it are expected to be refused, so it runs with server-side error
+// logging off (see quiet-session.mjs).
+const appDb = new pg.Client({ connectionString: quietAppUrl() || process.env.DATABASE_URL });
 
 const TAG = 'NEG-' + Date.now();
 const STARTED_AT = new Date();

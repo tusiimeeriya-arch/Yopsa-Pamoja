@@ -10,6 +10,14 @@ export const pool = new pg.Pool({
   idleTimeoutMillis: 30000,
 });
 
+// A database restart or failover drops idle clients. Without a listener pg
+// emits that on the pool as an unhandled 'error' event and the API process
+// exits, so a restart of PostgreSQL would take the API down with it. Log it and
+// let the next query open a fresh connection instead.
+pool.on('error', (err) => {
+  console.error(JSON.stringify({ level: 'error', message: 'idle database client error', detail: err.message }));
+});
+
 // Carries the caller's identity (app.user_id) for the current request, so every
 // statement the request issues is filtered by the row-level security policies.
 export const als = new AsyncLocalStorage();

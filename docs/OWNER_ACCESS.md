@@ -14,8 +14,9 @@ itself. The owner role (`ADMIN_DATABASE_URL`) exists for setup and tooling only.
 | `server/src/services/checks.js` | Self-test cleanup of the five protected identity tables (users, persons, groups, memberships, role assignments). |
 | `server/src/routes/admin.js` | `POST /api/admin/purge-demo` and `POST /api/admin/system-checks`. Both are registered inside `if (!isProduction())`, so the production API does not mount them. |
 | `server/scripts/purge-demo.mjs` | CLI demo purge, `--confirm "PURGE DEMO DATA"`. |
-| `server/scripts/system-checks.mjs` | CLI self-tests. Runs the checks in-process against the database. |
-| `server/scripts/negative-tests.mjs` | Creates and removes its own fixtures as the owner role. |
+| `server/scripts/system-checks.mjs` | CLI self-tests. Runs the checks in-process against the database, through `quiet-session.mjs`. |
+| `server/scripts/negative-tests.mjs` | Creates and removes its own fixtures as the owner role; its direct database probes use `quiet-session.mjs`. |
+| `server/scripts/quiet-session.mjs` | Builds the check connection string: owner URL, `role=pamoja_app`, `log_min_messages=fatal`. See below. |
 | `deploy/docker-compose.app.yml` | `seed` only. The `api` service is not given the owner URL. |
 
 Nothing else in the repository opens an owner connection.
@@ -48,6 +49,22 @@ Nothing else in the repository opens an owner connection.
    DEV        POST /api/admin/purge-demo    -> 403 {"error":{"code":"OTP_REQUIRED",...}}
    ```
 
+## Keeping the database log readable
+
+The check suites assert that PostgreSQL refuses things (a missing grant, a
+locked payment entry, an immutable `is_demo`, a duplicate key). PostgreSQL logs
+every `ERROR` server-side, so a run used to leave one block per expected refusal
+in the database log, indistinguishable from a real fault.
+
+`server/scripts/quiet-session.mjs` opens the suite's connection with
+`options=-c log_min_messages=fatal -c role=pamoja_app`. The SQL still runs as
+`pamoja_app` — same grants, same row-level security, `SET log_min_messages`
+still refused — but the session does not log its own rejections. The caller
+still receives them, so a guard that stops firing still fails the run. The API
+process never loads this module and keeps full server-side error logging; the
+development-only `POST /api/admin/system-checks` route runs on the API's own
+pool and therefore still logs its expected refusals.
+
 ## Running the owner-role tooling
 
 Run these as a one-off container or from a shell that has the owner URL; never
@@ -55,9 +72,14 @@ with the API's environment.
 
 ```sh
 ADMIN_DATABASE_URL=... node server/scripts/purge-demo.mjs --confirm "PURGE DEMO DATA"
-DATABASE_URL=... ADMIN_DATABASE_URL=... node server/scripts/system-checks.mjs
+ADMIN_DATABASE_URL=... node server/scripts/system-checks.mjs
+ADMIN_DATABASE_URL=... node server/scripts/negative-tests.mjs
 ADMIN_DATABASE_URL=... node server/src/createAdmin.js
 ```
+
+`system-checks.mjs` and the negative tests derive their application-role
+connection from `ADMIN_DATABASE_URL` (override with `CHECK_DATABASE_URL`); they
+still need the owner URL for that and for their own fixtures.
 
 `system-checks.mjs` signs no one in: it runs the checks in-process with the
 identity of an active organisation administrator, so row-level security behaves
