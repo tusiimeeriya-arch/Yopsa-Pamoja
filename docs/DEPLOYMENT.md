@@ -309,7 +309,7 @@ sudo -u pamoja-deploy docker compose --project-name pamoja \
   migrate node src/seed.js
 ```
 
-Expected: `demo seed complete`. It creates 5 demo groups, 14 users and the
+Expected: `demo seed complete`. It creates 5 demo groups, 13 users and the
 associated meetings, payments, receipts, loans and audit rows, all flagged
 `is_demo`. Dates are relative to the day it runs, so the data stays coherent.
 
@@ -379,10 +379,11 @@ Expected: `OK key=s3://…/daily/pamoja-<stamp>.sql.gz.age bytes=… seconds=…
 `monitor: all checks passed`. The first backup is the first real proof that the
 bucket, the keys and the age recipient are right.
 
-### S9 — Restore drill
+### S9 — Restore drill (staging)
 
-Prove a backup can actually be read. The private key is not on the server, so
-copy it in for the drill and remove it immediately afterwards:
+Prove a backup can actually be read. On **staging only**, copy the key in for
+the drill and shred it immediately afterwards. The production drill never puts
+the key on the server; it runs from a separate machine (§P8).
 
 ```sh
 # on your workstation
@@ -400,8 +401,9 @@ shred -u /tmp/pamoja-backup-key.txt
 ```
 
 Expected: a table of live vs restored row counts that match, then
-`PASS restore drill completed in <n>s`. Repeat monthly (production: monthly,
-with the key never left on the box).
+`PASS restore drill completed in <n>s`. Repeat monthly. Production does not use
+this method: the production drill runs from a separate machine (§P8), so the
+age private key never goes on the server at all.
 
 ### S10 — Point an external uptime check at it
 
@@ -475,7 +477,9 @@ Retention: `daily/` 7, `weekly/` 4, `monthly/` 6 (Sundays also copy to
 `weekly/`, the 1st also to `monthly/`). Objects are `pg_dump | gzip | age`;
 without the private key they are unreadable. `backup.sh` alerts to
 `ALERT_WEBHOOK_URL` and exits non-zero on any failure, and refuses a dump
-smaller than 1 KB.
+smaller than 1 KB. Run the restore drill monthly: on the server on staging
+(§S9), from a separate machine on production (§P8), so the age private key
+never touches the production server.
 
 ### Rotate a secret
 
@@ -518,7 +522,39 @@ are deliberate:
 | P5 | First deploy | `FIRST_DEPLOY=1 scripts/deploy.sh`, then `scripts/create-admin.sh`. **No seed step** |
 | P6 | Preflight | `BASE_URL=https://<domain> sh scripts/production-preflight.sh` — must print `production preflight: PASS`: zero demo rows in every table, the seed refuses, the API holds no owner credential, demo tooling 404, health and ready 200 |
 | P7 | Timers | Same units; change `Environment=BASE_URL=…` in `pamoja-monitor.service` to the production domain |
-| P8 | Backups | Same schedule; keep the age private key off-site, and run the restore drill monthly |
+| P8 | Backups | Same schedule; keep the age private key off-site, and run the restore drill monthly from a separate machine (below) |
+
+### P8 — Production restore drill (from a separate machine)
+
+The age private key stays on the operator's workstation. Do not copy it to the
+production server and do not give the workstation the production database
+credential. The drill restores the newest backup into a **local** throwaway
+database instead of comparing against live.
+
+Prerequisites on the workstation: the repo checkout, `aws`, `age`, and a local
+PostgreSQL 16 (`psql`, `createdb`, `dropdb`).
+
+```sh
+# read-only credentials for the production bucket
+export BACKUP_S3_ENDPOINT=<endpoint> BACKUP_S3_BUCKET=pamoja-backups-prod
+export BACKUP_S3_ACCESS_KEY=<key> BACKUP_S3_SECRET_KEY=<secret>
+# the local scratch database the dump is restored into
+export PGHOST=127.0.0.1 PGPORT=5432 PGUSER=postgres PGPASSWORD=<local password>
+export AGE_IDENTITY_FILE="$HOME/pamoja-backup-key.txt"
+
+LIVE_COMPARE=0 sh scripts/restore-drill.sh
+```
+
+`LIVE_COMPARE=0` skips the live row-count comparison (there is no published
+production port and the drill needs no production credential); it proves the
+object downloads, decrypts with the offline key, and restores every expected
+table with data.
+
+Expected: a table of restored row counts, then
+`PASS restore drill completed in <n>s (off-server, live comparison skipped, ...)`.
+Repeat monthly. The strict live-vs-restored comparison stays in the staging
+drill (§S9), which is the only place the key is ever copied to a server, and
+only for the length of the drill.
 
 Do not load member data until P6 passes. The go-live checklist also covers the
 operational steps the schema cannot enforce — changing the bootstrap admin
@@ -544,11 +580,11 @@ Run in this repository's sandbox (Linux, Docker) unless marked otherwise.
 | Demo tooling, `PAMOJA_DEMO_TOOLING` empty | `purge-demo 404`, `system-checks 404`, `demo-guide 404` |
 | Demo tooling, `PAMOJA_DEMO_TOOLING=on` | `demo-guide 401` anonymous, `200` for a signed-in admin with 13 demo accounts; `purge-demo`/`system-checks` still `404` |
 | `scripts/smoke-test.sh` against the edge, both postures | `smoke test: PASS` (TLS check skipped with `SMOKE_ALLOW_HTTP=1`) |
-| Synthetic seed on a production-mode database | one-off override → `demo seed complete`; 5 demo groups, 14 users |
+| Synthetic seed on a production-mode database | one-off override → `demo seed complete`; 5 demo groups, 13 users |
 | `scripts/create-admin.sh` path (`node src/createAdmin.js`) | `Created user …`, `Granted it_admin (Org)`, sign-in 200 |
 | `scripts/production-preflight.sh` mechanics | correctly FAILS a database that holds demo rows; seed refusal, owner-credential absence, health and ready all PASS |
 | TLS certificate issued for the real domain | **NOT VERIFIED HERE** — needs DNS and port 80 on the real server |
-| `harden-server.sh`, systemd timers, Object Storage upload, restore drill | **NOT VERIFIED HERE** — need the real server and the real bucket |
+| `harden-server.sh`, systemd timers, Object Storage upload, restore drill against the real bucket | **NOT VERIFIED HERE** — need the real server and the real bucket; the off-server drill mode was exercised locally against a real age-encrypted dump |
 | Production deploy | **NOT VERIFIED HERE** — not executed in this pass |
 
 ---

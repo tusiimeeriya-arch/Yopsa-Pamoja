@@ -52,15 +52,47 @@ echo "schema diff: identical ($(wc -l </tmp/schema-diff-fresh.sql) normalized li
 check() {
   got="$(psql "$old_url" -tA -v ON_ERROR_STOP=1 -c "$2")"
   if [ "$got" != "$3" ]; then
-    echo "SCHEMA DIFF FAILED: $1 expected '$3', got '$got'" >&2
+    echo "FAIL  $1: expected '$3', got '$got'" >&2
     exit 1
   fi
-  echo "  $1: $got"
+  echo "PASS  $1: $got"
 }
+
+denied() { # label, privilege, table
+  got="$(psql "$old_url" -tA -v ON_ERROR_STOP=1 -c "SELECT has_table_privilege('pamoja_app','$3','$2')")"
+  if [ "$got" != "f" ]; then
+    echo "FAIL  pamoja_app $2 on $3: expected f, got $got" >&2
+    exit 1
+  fi
+  echo "PASS  pamoja_app has no $2 on $3 (has_table_privilege = f)"
+}
+
+refused() { # label, statement
+  set +e
+  out="$(psql "$old_url" -v ON_ERROR_STOP=1 -c "SET ROLE pamoja_app; $2" 2>&1)"
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    echo "FAIL  $1: statement succeeded as pamoja_app" >&2
+    exit 1
+  fi
+  case "$out" in
+    *"permission denied for table"*)
+      echo "PASS  $1 refused: $(printf '%s' "$out" | grep -o 'ERROR:.*' | head -1)" ;;
+    *)
+      echo "FAIL  $1: not refused for the expected reason: $out" >&2
+      exit 1 ;;
+  esac
+}
+
 check "triggers" "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal" "15"
 check "policies" "SELECT count(*) FROM pg_policies" "27"
-check "app cannot update audit_logs" "SELECT has_table_privilege('pamoja_app','audit_logs','UPDATE')" "f"
-check "app cannot delete users" "SELECT has_table_privilege('pamoja_app','users','DELETE')" "f"
+denied "audit_logs UPDATE" UPDATE audit_logs
+denied "audit_logs DELETE" DELETE audit_logs
+denied "audit_logs TRUNCATE" TRUNCATE audit_logs
+denied "users DELETE" DELETE users
+refused "raw UPDATE audit_logs as pamoja_app" "UPDATE audit_logs SET action = action"
+refused "raw DELETE audit_logs as pamoja_app" "DELETE FROM audit_logs"
 check "audit append-only trigger" "SELECT count(*) FROM pg_trigger WHERE tgname='trg_audit_no_update'" "1"
 check "tenant policy on payments" "SELECT count(*) FROM pg_policies WHERE tablename='payment_entries' AND policyname='tenant_scope'" "1"
 echo "schema diff: PASS"

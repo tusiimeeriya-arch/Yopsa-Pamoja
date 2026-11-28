@@ -5,6 +5,8 @@ name: verify
 #   - the database proofs run as the least-privilege application role
 #   - the in-app system checks run from the CLI against the database
 #   - the negative tests run through the HTTP API as real seeded users
+#   - the clock proof runs at 1, 31 and 100 days in both directions: seed
+#     backdated (anchor) and the whole stack moved forward with libfaketime
 #   - npm audit and gitleaks guard dependencies and secrets
 on:
   push:
@@ -126,3 +128,91 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  clock:
+    name: Clock proof — ${{ matrix.direction }} ${{ matrix.days }}d
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        direction: [anchor, forward]
+        days: [1, 31, 100]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pamoja
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pamoja
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pamoja -d pamoja"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NODE_ENV: development
+      APP_ENV: development
+      ADMIN_DATABASE_URL: postgres://pamoja:postgres@localhost:5432/pamoja
+      DATABASE_URL: postgres://pamoja_app:pamoja_app_dev_password@localhost:5432/pamoja
+      APP_DB_PASSWORD: pamoja_app_dev_password
+      AUTH_TOKEN_SECRET: ci-only-token-secret
+      PAMOJA_LOOKUP_KEY: ci-only-lookup-key
+      PAMOJA_MASTER_KEY: ci-only-master-key
+      DEMO_PASSWORD: PamojaDemo#2026
+      RUN_SCHEDULER: '0'
+      OTP_ON_SCREEN: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install API dependencies
+        working-directory: server
+        run: npm ci --no-audit --no-fund
+
+      - name: Install libfaketime (forward only)
+        if: matrix.direction == 'forward'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq faketime
+
+      # The forward direction must move the database clock too; an
+      # application-only jump is not the scenario. PostgreSQL is started here
+      # rather than as a service because a service container cannot be told to
+      # run under libfaketime.
+      - name: Start PostgreSQL under faketime (forward only)
+        if: matrix.direction == 'forward'
+        run: |
+          docker run -d --name clock-db -p 55432:5432 --entrypoint sleep postgres:16 infinity
+          docker exec clock-db apt-get update -qq
+          docker exec clock-db apt-get install -y -qq faketime
+          docker exec -d -u postgres \
+            -e LD_PRELOAD=/usr/lib/x86_64-linux-gnu/faketime/libfaketime.so.1 \
+            -e FAKETIME="+${{ matrix.days }} days" \
+            -e FAKETIME_DONT_FAKE_MONOTONIC=1 \
+            clock-db bash -c '/usr/lib/postgresql/16/bin/initdb -D /tmp/pg -A trust -U pamoja >/tmp/initdb.log 2>&1 && echo "host all all all trust" >> /tmp/pg/pg_hba.conf && exec /usr/lib/postgresql/16/bin/postgres -D /tmp/pg -c listen_addresses=0.0.0.0'
+          for i in $(seq 1 60); do
+            if docker exec clock-db /usr/lib/postgresql/16/bin/pg_isready -h 127.0.0.1 -U pamoja >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker exec clock-db /usr/lib/postgresql/16/bin/pg_isready -h 127.0.0.1 -U pamoja
+          docker exec -u postgres clock-db /usr/lib/postgresql/16/bin/createdb -h 127.0.0.1 -U pamoja pamoja
+
+      - name: Clock proof (${{ matrix.direction }}, ${{ matrix.days }} days)
+        run: |
+          if [ "${{ matrix.direction }}" = "forward" ]; then
+            export ADMIN_DATABASE_URL="postgres://pamoja@127.0.0.1:55432/pamoja"
+            export DATABASE_URL="postgres://pamoja_app:pamoja_app_dev_password@127.0.0.1:55432/pamoja"
+            export CLOCK_FORWARD_DAYS="${{ matrix.days }}"
+          else
+            export SEED_ANCHOR_DAYS_AGO="${{ matrix.days }}"
+          fi
+          sh scripts/clock-proof.sh
+
+      - name: API log
+        if: always()
+        run: cat /tmp/clock-proof-api.log
