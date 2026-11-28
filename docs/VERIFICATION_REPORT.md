@@ -624,3 +624,98 @@ TEST DATA SAFETY:     demo_groups 5 -> 5, demo_payment_entries 19 -> 19,
                       demo_roles 13 -> 13, audit_rows 16 -> 23
 PASSWORD TESTS:       3 passed, 0 failed
 ```
+
+## 11. Re-verification pass (`security-hardening-4`)
+
+Every check was re-run against a database rebuilt from `server/src/schema.sql`
+and the committed demo seed. Items 11.1–11.4 were already implemented on `main`
+(Pass 3); this section is the fresh proof. No application code changed.
+
+### 11.1 Owner-role credentials
+
+`ADMIN_DATABASE_URL` is read only in `server/src/owner.js` (the pool) and in
+`server/src/index.js` (the production boot guard and its log line). Consumers
+are listed in [OWNER_ACCESS.md](OWNER_ACCESS.md). The production process was
+started without the owner URL:
+
+```
+{"level":"info","message":"pamoja api listening on 8099","ownerCredentials":"absent","demoTooling":"absent"}
+```
+
+An authenticated organisation administrator (a session created in development
+and deleted after the probe) received:
+
+```
+PRODUCTION GET  /auth/me              -> 200
+PRODUCTION POST /admin/purge-demo     -> 404 {"error":{"code":"NOT_FOUND","message":"Not found."}}
+PRODUCTION POST /admin/system-checks  -> 404 {"error":{"code":"NOT_FOUND","message":"Not found."}}
+```
+
+The same production process with the owner URL present refuses to boot:
+
+```
+{"level":"error","message":"refusing to start","reason":"ADMIN_DATABASE_URL must not be set for the production API; owner access is CLI-only"}
+exit=1
+```
+
+The development process still mounts both tools:
+
+```
+DEV POST /admin/purge-demo     -> 403 {"code":"OTP_REQUIRED"}
+DEV POST /admin/system-checks  -> 200 passed 35 total 35
+```
+
+### 11.2 Argon2id off the main thread
+
+`server/src/argonPool.js` runs Argon2id on two worker threads
+(`server/src/argonWorker.js`). A 50-login burst was run against the pre-change
+tree (`8800d5e`, hash-wasm on the event loop) and the current tree, polling
+`GET /api/health` every 25 ms throughout:
+
+```
+BEFORE  login burst : ok=50/50 wallMs=3422
+BEFORE  health idle : {"n":30,"median":3,"p95":7,"max":54}
+BEFORE  health burst: {"n":2,"median":3001,"p95":3001,"max":3001}
+
+AFTER   login burst : ok=50/50 wallMs=4519
+AFTER   health idle : {"n":30,"median":2,"p95":4,"max":44}
+AFTER   health burst: {"n":151,"median":3,"p95":6,"max":142}
+```
+
+Unit tests: `node --test test/*.test.js` → `# tests 4 / # pass 4 / # fail 0`.
+
+### 11.3 `app.seed` and `app.system` over HTTP
+
+Negative test 13 sends query parameters, headers and SQL-looking body values,
+then reads both settings on an application-role session and attempts the
+seed-only `is_demo` flip:
+
+```
+PASS  app.seed and app.system cannot be enabled over HTTP  query: 404 NOT_FOUND Group not found. | header: 404 NOT_FOUND Group not found. | body: 201 | app session app.seed='null' app.system='null' | is_demo flip: 42501
+```
+
+### 11.4 CI floors
+
+`.github/workflows/verify.yml` sets `MIN_SYSTEM_CHECKS: '35'` (line 55) and
+`MIN_NEGATIVE_TESTS: '12'` (line 56). Raising the system-check floor to 36 on
+the same 35-check suite fails the run:
+
+```
+35 passed, 0 failed, 35 total (tag SELFTEST-...)
+expected at least 36 system checks, got 35
+exit=1
+```
+
+### 11.5 Counts
+
+```
+IN-APP SYSTEM CHECKS: 35 passed, 0 failed, 35 total
+NEGATIVE TESTS:       13 passed, 0 failed
+TEST DATA SAFETY:     demo_groups 5 -> 5, demo_payment_entries 19 -> 19,
+                      demo_receipts 4 -> 4, demo_loans 14 -> 14,
+                      demo_roles 13 -> 13, audit_rows 16 -> 23
+DATABASE PROOFS:      pamoja_app is_superuser=f bypasses_rls=f;
+                      allocation cap, locked entries, audit append-only,
+                      is_demo immutability and DELETE/TRUNCATE all refused
+UNIT TESTS:           4 passed, 0 failed
+```
