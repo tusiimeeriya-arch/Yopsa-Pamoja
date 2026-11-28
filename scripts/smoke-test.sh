@@ -79,11 +79,20 @@ else
   pass "database port 5432" "closed"
 fi
 
-# 6. Demo tooling is absent.
-for path in /api/admin/purge-demo /api/admin/system-checks /api/admin/demo-guide; do
+# 6. Demo tooling is absent. Purge and the in-app self-tests never exist on a
+#    deployed stack. The read-only demo guide is closed (404) in production and
+#    answers only an authenticated administrator on staging (PAMOJA_DEMO_TOOLING
+#    =on), so an anonymous request must never be served.
+for path in /api/admin/purge-demo /api/admin/system-checks; do
   c="$(code "$BASE_URL$path")"
   if [ "$c" = "404" ]; then pass "demo tooling ${path}" "404"; else fail "demo tooling ${path}" "$c"; fi
 done
+c="$(code "$BASE_URL/api/admin/demo-guide")"
+case "$c" in
+  404) pass "demo guide not public" "404 closed" ;;
+  401|403) pass "demo guide not public" "${c} sign-in required" ;;
+  *) fail "demo guide not public" "${c} served anonymously" ;;
+esac
 
 # 7. Health and readiness.
 h="$(code "$BASE_URL/health")"

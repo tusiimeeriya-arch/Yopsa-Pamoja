@@ -156,6 +156,9 @@ services:
       - "443:443/udp"
     environment:
       PAMOJA_DOMAIN: ${PAMOJA_DOMAIN:?set PAMOJA_DOMAIN}
+      # Staging only: "on" opens the read-only admin demo guide for the seeded
+      # synthetic accounts. Unset in production, where the path answers 404.
+      PAMOJA_DEMO_TOOLING: ${PAMOJA_DEMO_TOOLING:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

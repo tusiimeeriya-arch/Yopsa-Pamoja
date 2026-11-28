@@ -38,11 +38,19 @@
 		-Server
 	}
 
-	# Repository and operational paths are never public. Demo tooling is
-	# mounted only outside production, and production must answer 404 even if
-	# a future build mounts it by mistake.
-	@blocked path /.git/* /.env* /deploy/* /server/* /scripts/* /docs/* /backup/* /api/admin/purge-demo /api/admin/system-checks /api/admin/demo-guide
+	# Repository and operational paths are never public. The demo purge and the
+	# in-app self-tests are not mounted by the production API; the edge refuses
+	# them anyway, even if a future build mounts them by mistake.
+	@blocked path /.git/* /.env* /deploy/* /server/* /scripts/* /docs/* /backup/* /api/admin/purge-demo /api/admin/system-checks
 	respond @blocked 404
+
+	# The read-only demo guide lists the synthetic demo accounts. It is closed
+	# unless this environment turns demo tooling on (staging only, with seeded
+	# synthetic data). Production leaves PAMOJA_DEMO_TOOLING unset, so the path
+	# answers 404 there. Even when it is open the API still requires an
+	# administrator session.
+	@demo_off expression `{http.request.uri.path}.startsWith('/api/admin/demo-guide') && {env.PAMOJA_DEMO_TOOLING} != 'on'`
+	respond @demo_off 404
 
 	handle /health {
 		rewrite * /api/health

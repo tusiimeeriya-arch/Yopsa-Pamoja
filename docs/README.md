@@ -14,6 +14,7 @@ is complete for the current phase.
 | [THREAT_MODEL.md](THREAT_MODEL.md) | STRIDE analysis for payments, loans, auth, uploads and offline sync, with test mapping | P0 — delivered |
 | [ASSUMPTIONS.md](ASSUMPTIONS.md) | Every policy value not fixed by the brief, with its safe default and approval owner | P0 — delivered, awaiting management approval |
 | [TEST_PLAN.md](TEST_PLAN.md) | Test levels, coverage gates and the required test catalogue with IDs | P0 — delivered |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Staging deployment on Vultr: topology, secrets, operator steps S1–S11, production steps P1–P8, backups, rollback, incident response | P9 — staging executed, production documented |
 | [ADR/](ADR/) | Architecture decision records | P0 — 10 records |
 | SECURITY_CONTROLS.md | OWASP ASVS L2 / MASVS control map with proving test per control | P1 onwards |
 | DATA_PROTECTION.md | Uganda DPPA notices, lawful basis, retention, correction, export, deletion | P2 onwards |
